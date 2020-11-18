@@ -3,6 +3,14 @@ name = "sfn-ng"
 version = "0.1.0"
 authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>"]
 edition = "2018"
+license-file = "LICENSE"
+description = "Rust replacement for sfn with more features"
+hompage = "https://github.com/arvatoaws-labs/sfn-ng"
+documentation = "https://github.com/arvatoaws-labs/sfn-ng"
+repository = "https://github.com/arvatoaws-labs/sfn-ng"
+readme = "README.md"
+# keywords
+# categories
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
