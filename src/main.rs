@@ -8,7 +8,7 @@ use itertools::Itertools;
 use std::fs;
 use std::time::Duration;
 use std::thread::sleep;
-use std::io::{Write, stdin, stdout, Read};
+use std::io::{Write, stdin, stdout};
 use serde_json::{Value};
 use chrono::*;
 use std::collections::{HashMap, VecDeque};
