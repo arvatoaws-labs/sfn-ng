@@ -16,6 +16,7 @@ use std::path::Path;
 use async_recursion::async_recursion;
 use std::str::FromStr;
 use std::process::{Command, Stdio};
+use string_morph;
 
 fn match_change_color(change_type: String, replacement: bool, msg: String) -> ColoredString {
   return match &change_type[..] {
@@ -1107,7 +1108,28 @@ fn ruby_stack_parameters(rb_filename: String) -> String {
 
     let mod_body = body_arr.iter().join("\n");
     let output = execute_ruby(mod_body);
-    return output;
+    let mut json: Value = serde_json::from_str(&*output).expect("Invalid JSON converted from ruby");
+    if json.get("parameters").is_some() {
+      let params = json.get("parameters").unwrap().as_object().unwrap();
+      let mut new_params: serde_json::Map<String, Value> = serde_json::Map::new();
+      for (key, value) in params {
+        new_params.insert(string_morph::to_pascal_case(key), value.clone());
+      }
+      let new_params_value = serde_json::Value::Object(new_params);
+      json.as_object_mut().unwrap().remove("parameters");
+      json.as_object_mut().unwrap().insert("parameters".to_string(), new_params_value);
+    }
+    if json.get("mappings").is_some() {
+      let mappings = json.get("mappings").unwrap().as_object().unwrap();
+      let mut new_mappings: serde_json::Map<String, Value> = serde_json::Map::new();
+      for (key, value) in mappings {
+        new_mappings.insert(string_morph::to_pascal_case(key), value.clone());
+      }
+      let new_mappings_value = serde_json::Value::Object(new_mappings);
+      json.as_object_mut().unwrap().remove("mappings");
+      json.as_object_mut().unwrap().insert("mappings".to_string(), new_mappings_value);
+    }
+    return json.to_string();
   } else {
     panic!("Provided path invalid");
   }
