@@ -292,58 +292,63 @@ fn value_to_string(v: &Value) -> Option<String> {
 
 fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   // stack-parameters
-  let json_filename = format!("stack-parameters/{}.json", stack_name);
-  if Path::new(&json_filename.clone()).exists() {
-    let body = Some(fs::read_to_string(json_filename).expect("Something went wrong reading json stack params"));
-    let content: Value = serde_json::from_str(&&*(body.clone().unwrap())).unwrap();
-
-    let template = value_to_string(&content.get("template").expect("No template specified in stack parameter file").clone()).expect("Template path is not a string");
-
-    let mut region= Region::default();
-    let parsed_region = content.get("region");
-    if parsed_region.is_some() {
-      region = map_region(&*value_to_string(parsed_region.unwrap()).expect("Region parsing failed"));
-    }
-
-    let tags_raw = content.get("tags");
-    let mut tags: Option<HashMap<String, String>> = None;
-    if tags_raw.is_some() {
-      tags = Some(tags_raw.unwrap().as_object().expect("Tags malformed in stack parameter file").iter().map(|(key, value)| {
-        return (key.clone(), value_to_string(&value.clone()).expect("Tag value isn't string convertible"));
-      }).collect());
-    }
-    let mappings_raw = content.get("mappings");
-    let mut mappings: Option<HashMap<String, String>> = None;
-    if mappings_raw.is_some() {
-      mappings = Some(mappings_raw.unwrap().as_object().expect("Mappings malformed in stack parameter file").iter().map(|(key, value)| {
-        return (key.clone(), value_to_string(&value.clone()).expect("Mappings value isn't string convertible"));
-      }).collect());
-    }
-    let parameters_raw = content.get("parameters");
-    let mut parameters: Option<HashMap<String, String>> = None;
-    if parameters_raw.is_some() {
-      parameters = Some(parameters_raw.unwrap().as_object().expect("Parameters malformed in stack parameter file").iter().map(|(key, value)| {
-        return (key.clone(), value_to_string(&value.clone()).expect("Parameter value isn't string convertible"));
-      }).collect());
-    }
-    let apply_stacks_raw = content.get("apply_stacks");
-    let mut apply_stacks = None;
-    if apply_stacks_raw.is_some() {
-      apply_stacks = Some(apply_stacks_raw.unwrap().as_array().expect("Apply stacks malformed in stack parameter file").iter().map(|v| value_to_string(&v.clone()).expect("Stack name not stringifiable")).collect());
-    }
-
-    return Some(StackParameterFile {
-      apply_stacks,
-      parameters,
-      mappings,
-      tags,
-      template,
-      region
-    })
-  // } else if (stack_name.yaml exists) etc.
+  let rb_filename = format!("stack-parameters/{}.rb", stack_name);
+  let body: Option<String>;
+  if Path::new(&rb_filename.clone()).exists() {
+    body = Some(ruby_stack_parameters(rb_filename));
   } else {
-    return None;
+    let json_filename = format!("stack-parameters/{}.json", stack_name);
+    if Path::new(&json_filename.clone()).exists() {
+      body = Some(fs::read_to_string(json_filename).expect("Something went wrong reading json stack params"));
+    } else {
+      return None;
+    }
   }
+  let content: Value = serde_json::from_str(&&*(body.clone().unwrap())).unwrap();
+
+  let template = value_to_string(&content.get("template").expect("No template specified in stack parameter file").clone()).expect("Template path is not a string");
+
+  let mut region= Region::default();
+  let parsed_region = content.get("region");
+  if parsed_region.is_some() {
+    region = map_region(&*value_to_string(parsed_region.unwrap()).expect("Region parsing failed"));
+  }
+
+  let tags_raw = content.get("tags");
+  let mut tags: Option<HashMap<String, String>> = None;
+  if tags_raw.is_some() {
+    tags = Some(tags_raw.unwrap().as_object().expect("Tags malformed in stack parameter file").iter().map(|(key, value)| {
+      return (key.clone(), value_to_string(&value.clone()).expect("Tag value isn't string convertible"));
+    }).collect());
+  }
+  let mappings_raw = content.get("mappings");
+  let mut mappings: Option<HashMap<String, String>> = None;
+  if mappings_raw.is_some() {
+    mappings = Some(mappings_raw.unwrap().as_object().expect("Mappings malformed in stack parameter file").iter().map(|(key, value)| {
+      return (key.clone(), value_to_string(&value.clone()).expect("Mappings value isn't string convertible"));
+    }).collect());
+  }
+  let parameters_raw = content.get("parameters");
+  let mut parameters: Option<HashMap<String, String>> = None;
+  if parameters_raw.is_some() {
+    parameters = Some(parameters_raw.unwrap().as_object().expect("Parameters malformed in stack parameter file").iter().map(|(key, value)| {
+      return (key.clone(), value_to_string(&value.clone()).expect("Parameter value isn't string convertible"));
+    }).collect());
+  }
+  let apply_stacks_raw = content.get("apply_stacks");
+  let mut apply_stacks = None;
+  if apply_stacks_raw.is_some() {
+    apply_stacks = Some(apply_stacks_raw.unwrap().as_array().expect("Apply stacks malformed in stack parameter file").iter().map(|v| value_to_string(&v.clone()).expect("Stack name not stringifiable")).collect());
+  }
+
+  return Some(StackParameterFile {
+    apply_stacks,
+    parameters,
+    mappings,
+    tags,
+    template,
+    region
+  })
 }
 
 fn string_to_static_str(s: String) -> &'static str {
