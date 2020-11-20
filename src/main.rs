@@ -243,10 +243,12 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     "CREATE_COMPLETE",
     "UPDATE_COMPLETE"
   ].contains(&stack_result[0].stack_status.as_str()) {
-    let outputs = client.describe_stacks(describe_input.clone()).await.expect("Something went wrong describing stack").stacks.expect("Something went wrong describing stack")[0].outputs.clone().expect("Something went wrong describing stack");
-    println!("Outputs:");
-    for output in outputs.iter().sorted_by_key(|output| output.output_key.clone()) {
-      println!("{:50.50}: {}", output.output_key.as_ref().unwrap().to_string().bold(), output.output_value.as_ref().unwrap().to_string());
+    let outputs = client.describe_stacks(describe_input.clone()).await.expect("Something went wrong describing stack").stacks.expect("Something went wrong describing stack")[0].outputs.clone();
+    if outputs.is_some() {
+      println!("Outputs:");
+      for output in outputs.unwrap().iter().sorted_by_key(|output| output.output_key.clone()) {
+        println!("{:50.50}: {}", output.output_key.as_ref().unwrap().to_string().bold(), output.output_value.as_ref().unwrap().to_string());
+      }
     }
   }
 }
@@ -395,7 +397,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.1")
+    .version("0.2.2")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
