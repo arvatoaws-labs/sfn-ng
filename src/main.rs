@@ -155,6 +155,47 @@ async fn generate_completion_test_rek(describe_input: DescribeStacksInput, clien
 }
 
 #[async_recursion]
+async fn wait_for_bucket_creation(client: S3Client, name: String, i: u64) {
+  match client.list_buckets().await {
+    Ok(result) => {
+      match result.buckets {
+        None => {
+          let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+          if i > 20 {
+            panic!("Retry limit reached in waiting for template bucket to create");
+          }
+          sleep(Duration::from_millis(wait_time));
+          wait_for_bucket_creation(client, name, i+1).await
+        },
+        Some(buckets) => {
+          match buckets.binary_search_by(|bucket| bucket.name.clone().unwrap_or("-".to_string()).cmp(&name)) {
+            Ok(_) => {}
+            Err(e) => {
+              let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+              if i > 20 {
+                panic!("Retry limit reached in waiting for template bucket to create: {}", e);
+              }
+              sleep(Duration::from_millis(wait_time));
+              wait_for_bucket_creation(client, name, i+1).await
+            }
+          }
+        }
+      }
+    },
+    Err(e) => {
+      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      if i > 20 {
+        panic!("Retry limit reached in waiting for template bucket to create: {}", e);
+      } else {
+        println!("Something went wrong in waiting for template bucket (retrying in {} ms): {}", wait_time, e);
+      }
+      sleep(Duration::from_millis(wait_time));
+      wait_for_bucket_creation(client, name, i+1).await
+    }
+  }
+}
+
+#[async_recursion]
 async fn wait_for_changeset_creation(client: CloudFormationClient, describe_input: DescribeChangeSetInput, i: u64) {
   match client.describe_change_set(describe_input.clone()).await {
     Ok(result) => {
@@ -397,7 +438,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.3")
+    .version("0.2.4")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1018,7 +1059,7 @@ async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u6
   };
   match client.create_bucket(create_input).await {
     Ok(_) => {
-      // TODO: wait for bucket creation completion
+      wait_for_bucket_creation(client, name.clone(), 0).await;
       return name;
     }
     Err(e) => {
