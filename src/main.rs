@@ -397,7 +397,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.2")
+    .version("0.2.3")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -997,12 +997,18 @@ async fn update_stack_rek(client: CloudFormationClient, create_changeset_input: 
 
 #[async_recursion]
 async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u64) -> String {
+  let bucket_configuration: Option<CreateBucketConfiguration>;
+  if region == Region::UsEast1 {
+    bucket_configuration = None;
+  } else {
+    bucket_configuration = Some(CreateBucketConfiguration {
+      location_constraint: Some(region.name().to_string())
+    });
+  }
   let create_input = CreateBucketRequest {
     acl: None,
     bucket: name.clone(),
-    create_bucket_configuration: Some(CreateBucketConfiguration {
-      location_constraint: Some(region.name().to_string())
-    }),
+    create_bucket_configuration: bucket_configuration,
     grant_full_control: None,
     grant_read: None,
     grant_read_acp: None,
@@ -1012,6 +1018,7 @@ async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u6
   };
   match client.create_bucket(create_input).await {
     Ok(_) => {
+      // TODO: wait for bucket creation completion
       return name;
     }
     Err(e) => {
