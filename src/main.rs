@@ -17,6 +17,7 @@ use async_recursion::async_recursion;
 use std::str::FromStr;
 use std::process::{Command, Stdio};
 use string_morph;
+use walkdir::WalkDir;
 
 fn match_change_color(change_type: String, replacement: bool, msg: String) -> ColoredString {
   return match &change_type[..] {
@@ -335,12 +336,25 @@ fn value_to_string(v: &Value) -> Option<String> {
 
 fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   // stack-parameters
-  let rb_filename = format!("stack-parameters/{}.rb", stack_name);
+  let mut rb_filename: String = "".to_string();
+  let mut json_filename: String = "".to_string();
+  for entry in WalkDir::new("stack-parameters") {
+    let entry = entry.unwrap(); 
+    if entry.file_name().to_str().unwrap().to_string() == format!("{}.rb", stack_name) {
+      println!("Using parameter file: {}", entry.path().display());
+      rb_filename = format!("{}", entry.path().display());
+    } else if entry.file_name().to_str().unwrap().to_string() == format!("{}.json", stack_name) {
+      println!("Using parameter file: {}", entry.path().display());
+      json_filename = format!("{}", entry.path().display());
+    }
+  }
+
+  // let rb_filename = format!("stack-parameters/{}.rb", stack_name);
   let body: Option<String>;
   if Path::new(&rb_filename.clone()).exists() {
     body = Some(ruby_stack_parameters(rb_filename));
   } else {
-    let json_filename = format!("stack-parameters/{}.json", stack_name);
+    // let json_filename = format!("stack-parameters/{}.json", stack_name);
     if Path::new(&json_filename.clone()).exists() {
       body = Some(fs::read_to_string(json_filename).expect("Something went wrong reading json stack params"));
     } else {
