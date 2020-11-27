@@ -1,7 +1,7 @@
 [package]
 name = "sfn-ng"
-version = "0.2.4"
-authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>"]
+version = "0.2.5"
+authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>", "Stephan Telahr <stephan.telahr@bertelsmann.de>"]
 edition = "2018"
 license = "GPL-3.0"
 description = "Rust replacement for sfn with more features"
