@@ -57,6 +57,11 @@ fn pretty_print_resource_change(change: Change) {
   }
 }
 
+fn pretty_panic(message: String) {
+  println!("{}", message.red().bold());
+  ::std::process::exit(1);
+}
+
 fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTime<Local>) {
   events.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
   for i in 0..events.len() {
@@ -210,7 +215,7 @@ async fn wait_for_changeset_creation(client: CloudFormationClient, describe_inpu
           sleep(Duration::from_millis(wait_time));
           wait_for_changeset_creation(client, describe_input, i+1).await
         }
-        "FAILED" => {panic!("Failed state in describe change set")}
+        "FAILED" => {pretty_panic(format!("Failed state in describe change set: {}", &result.status_reason.unwrap_or("Empty status_reason".to_string())))}
         x => {panic!("Unknown state in describe change set: {}", x)}
       }
     },
@@ -452,7 +457,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.5")
+    .version("0.2.6")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -693,6 +698,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, _is
   }
   let client = CloudFormationClient::new(region.clone());
 
+  println!("Region: {}", region.name());
+
   let explicit_parameters: Vec<Parameter> = match opts.values_of("parameters") {
     Some(parameters_list) => parameters_list.collect::<Vec<_>>().iter().map(|input| {
       let pair = input.split("=").collect::<Vec<&str>>();
@@ -907,7 +914,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, _is
     return default_param.clone();
   }).collect::<Vec<Parameter>>();
 
-  println!("Parameters for StackName");
+  let mut dirty_flag_parameter_header = false;
   let used_parameters = merged_parameters.iter().map(|param| {
     if opts.is_present("defaults") {
       if param.clone().parameter_value.is_some() {
@@ -918,7 +925,13 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, _is
           use_previous_value: param.clone().use_previous_value
         };
       }
+    } else {
+      if !dirty_flag_parameter_header {
+        println!("Parameters for StackName");
+        dirty_flag_parameter_header = true;
+      }
     }
+    
     let mut input = String::new();
     print!("{}?:[{}] ", param.clone().parameter_key.unwrap().bold(), param.clone().parameter_value.unwrap_or(String::from("")).italic());
     stdout().flush().unwrap();
