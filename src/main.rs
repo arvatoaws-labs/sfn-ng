@@ -118,15 +118,20 @@ async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClie
   };
   return match client.describe_stacks(describe_input.clone()).await {
     Ok(result) => {
-      let outputs = result.stacks.expect("Something went wrong describing stack")[0].outputs.clone().expect("Something went wrong describing stack");
-      outputs.iter().map(|output| {
-        return Parameter {
-          parameter_key: Some(output.output_key.as_ref().unwrap().to_string()),
-          parameter_value: Some(output.output_value.as_ref().unwrap().to_string()),
-          resolved_value: None,
-          use_previous_value: None,
-        };
-      }).collect::<Vec<Parameter>>()
+      match result.stacks.expect("Something went wrong describing stack")[0].outputs.clone() {
+        Some(outputs) => {
+          outputs.iter().map(|output| {
+            return Parameter {
+              parameter_key: Some(output.output_key.as_ref().unwrap().to_string()),
+              parameter_value: Some(output.output_value.as_ref().unwrap().to_string()),
+              resolved_value: None,
+              use_previous_value: None,
+            };
+          }).collect::<Vec<Parameter>>()
+        }
+        None => {vec![]}
+      }
+
     },
     Err(e) => {
       let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
@@ -457,7 +462,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.7")
+    .version("0.2.8")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
