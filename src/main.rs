@@ -330,7 +330,7 @@ struct StackParameterFile {
   parameters: Option<HashMap<String, String>>,
   mappings: Option<HashMap<String, String>>,
   tags: Option<HashMap<String, String>>,
-  template: String,
+  template: Option<String>,
   region: Region
 }
 
@@ -348,14 +348,17 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   // stack-parameters
   let mut rb_filename: String = "".to_string();
   let mut json_filename: String = "".to_string();
-  for entry in WalkDir::new("stack-parameters") {
-    let entry = entry.unwrap(); 
-    if entry.file_name().to_str().unwrap().to_string() == format!("{}.rb", stack_name) {
-      println!("Using parameter file: {}", entry.path().display());
-      rb_filename = format!("{}", entry.path().display());
-    } else if entry.file_name().to_str().unwrap().to_string() == format!("{}.json", stack_name) {
-      println!("Using parameter file: {}", entry.path().display());
-      json_filename = format!("{}", entry.path().display());
+
+  if Path::new("stack-parameters").exists() {
+    for entry in WalkDir::new("stack-parameters") {
+      let entry = entry.unwrap();
+      if entry.file_name().to_str().unwrap().to_string() == format!("{}.rb", stack_name) {
+        println!("Using parameter file: {}", entry.path().display());
+        rb_filename = format!("{}", entry.path().display());
+      } else if entry.file_name().to_str().unwrap().to_string() == format!("{}.json", stack_name) {
+        println!("Using parameter file: {}", entry.path().display());
+        json_filename = format!("{}", entry.path().display());
+      }
     }
   }
 
@@ -373,7 +376,12 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   }
   let content: Value = serde_json::from_str(&&*(body.clone().unwrap())).unwrap();
 
-  let template = value_to_string(&content.get("template").expect("No template specified in stack parameter file").clone()).expect("Template path is not a string");
+  let template = match content.get("template") {
+    Some(template) => {
+      Some(value_to_string(&template.clone()).expect("Template path is not a string"))
+    }
+    None => { None }
+  };
 
   let mut region= Region::default();
   let parsed_region = content.get("region");
@@ -462,7 +470,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.8")
+    .version("0.2.9")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -690,8 +698,62 @@ struct StackInput {
   path: String
 }
 
+#[async_recursion]
+async fn get_old_stack_parameters_rek(stack_name: String, region: Region, i: u64) -> Vec<Parameter> {
+  let client = CloudFormationClient::new(region.clone());
+  let input = DescribeStacksInput {
+    next_token: None,
+    stack_name: Some(stack_name.clone())
+  };
+  match client.describe_stacks(input).await {
+    Ok(output) => {
+      let stacks = output.stacks.expect("No existing stacks with that name found");
+      if stacks.len() == 1 {
+        stacks[0].parameters.clone().unwrap_or(vec![])
+      } else {
+        panic!("No existing stacks with that name found");
+      }
+    }
+    Err(e) => {
+      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      if i > 20 {
+        panic!("Retry limit reached in get_old_stack_parameters_rek: {}", e);
+      } else {
+        println!("Something went wrong in get_old_stack_parameters_rek (retrying in {} ms): {}", wait_time, e);
+      }
+      sleep(Duration::from_millis(wait_time));
+      get_old_stack_parameters_rek(stack_name, region, i+1).await
+    }
+  }
+}
+
+#[async_recursion]
+async fn get_old_template_body_rek(stack_name: String, region: Region, i: u64) -> String {
+  let client = CloudFormationClient::new(region.clone());
+  let input = GetTemplateInput {
+    change_set_name: None,
+    stack_name: Some(stack_name.clone()),
+    template_stage: None
+  };
+  match client.get_template(input).await {
+    Ok(output) => {
+      output.template_body.expect("No template body returned from existing stack")
+    }
+    Err(e) => {
+      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      if i > 20 {
+        panic!("Retry limit reached in get_old_template_body_rek: {}", e);
+      } else {
+        println!("Something went wrong in get_old_template_body_rek (retrying in {} ms): {}", wait_time, e);
+      }
+      sleep(Duration::from_millis(wait_time));
+      get_old_template_body_rek(stack_name, region, i+1).await
+    }
+  }
+}
+
 // if upgrade check for previous values of params & tags as well.
-async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, _is_upgrade: bool) -> StackInput {
+async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_upgrade: bool) -> StackInput {
   let stack_name = opts.value_of("STACKNAME").expect("No Stack named").to_string();
   println!("Value for StackName: {}", stack_name);
 
@@ -797,17 +859,29 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, _is
   let tags = Some(tags_vec);
   let mut template_file = opts.value_of("file");
   if stack_parameter_file.clone().is_some() {
-    template_file = Some(string_to_static_str(stack_parameter_file.clone().unwrap().template));
+    if stack_parameter_file.clone().unwrap().template.is_some() {
+      template_file = Some(string_to_static_str(stack_parameter_file.clone().unwrap().template.unwrap()));
+    }
   }
-  let template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
-  let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
-  let template_parameters = get_template_params(template_content, false); // TODO: yaml support
-
-  let bucket = find_template_bucket_or_create_it_rek(region.clone(), 0).await;
   let s3 = S3Client::new(region.clone());
-
-  let path = format!("{}/{}", template_file.expect("No template file specified").to_string(), start_time.timestamp());
-
+  let bucket = find_template_bucket_or_create_it_rek(region.clone(), 0).await;
+  let template_parameters: Vec<Parameter>;
+  let path: String;
+  let template_body: Option<String>;
+  if template_file.is_some() {
+    template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
+    let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
+    template_parameters = get_template_params(template_content, false); // TODO: yaml support
+    path = format!("{}/{}", template_file.expect("No template file specified").to_string(), start_time.timestamp());
+  } else {
+    if is_upgrade {
+      template_parameters = get_old_stack_parameters_rek(stack_name.clone(), region.clone(), 0).await;
+      template_body = Some(get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await);
+      path = format!("without-new-template/{}/{}", stack_name.clone(), start_time.timestamp());
+    } else {
+      panic!("No template specified for create stack");
+    }
+  }
   let upload_template_input = PutObjectRequest {
     acl: None,
     body: Some(ByteStream::from(template_body.clone().unwrap().as_bytes().to_vec())),
