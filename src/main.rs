@@ -435,6 +435,32 @@ async fn list_stacks(client: CloudFormationClient, matches: ArgMatches) {
   let mut list_stacks_input: ListStacksInput = Default::default();
   if list_opts.is_present("status") {
     list_stacks_input.stack_status_filter = Some(vec![list_opts.value_of("status").unwrap().to_string()]);
+  } else if !list_opts.is_present("deleted") {
+    let list_of_types = [
+      "CREATE_IN_PROGRESS",
+      "CREATE_FAILED",
+      "CREATE_COMPLETE",
+      "ROLLBACK_IN_PROGRESS",
+      "ROLLBACK_FAILED",
+      "ROLLBACK_COMPLETE",
+      "DELETE_IN_PROGRESS",
+      "DELETE_FAILED",
+      // "DELETE_COMPLETE",
+      "UPDATE_IN_PROGRESS",
+      "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS",
+      "UPDATE_COMPLETE",
+      "UPDATE_ROLLBACK_IN_PROGRESS",
+      "UPDATE_ROLLBACK_FAILED",
+      "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS",
+      "UPDATE_ROLLBACK_COMPLETE",
+      "REVIEW_IN_PROGRESS",
+      "IMPORT_IN_PROGRESS",
+      "IMPORT_COMPLETE",
+      "IMPORT_ROLLBACK_IN_PROGRESS",
+      "IMPORT_ROLLBACK_FAILED",
+      "IMPORT_ROLLBACK_COMPLETE"
+    ];
+    list_stacks_input.stack_status_filter = Some(list_of_types.iter().map(|x| x.to_string()).collect());
   }
   list_stacks_rek(client, list_stacks_input, 0).await
 }
@@ -470,7 +496,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.9")
+    .version("0.2.10")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -480,6 +506,11 @@ fn generate_matches() -> ArgMatches {
         .long("status")
         .takes_value(true)
         .about("Match stacks with given status")
+      )
+      .arg(Arg::new("deleted")
+        .short('d')
+        .long("deleted")
+        .about("Include deleted stacks")
       )
     )
     .subcommand(App::new("destroy")
