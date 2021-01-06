@@ -20,7 +20,7 @@ exclude = [
 
 [dependencies]
 rusoto_core = ">=0.44.0"
-rusoto_cloudformation = ">=0.44.0"
+rusoto_cloudformation = ">=0.46.0"
 rusoto_s3 = ">=0.44.0"
 rusoto_sts = ">=0.44.0"
 tokio = { version = "<0.3.0", features = ["full"] }
