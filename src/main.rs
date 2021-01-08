@@ -496,7 +496,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.11")
+    .version("0.2.12")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -917,7 +917,6 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     acl: None,
     body: Some(ByteStream::from(template_body.clone().unwrap().as_bytes().to_vec())),
     bucket: bucket.clone(),
-    bucket_key_enabled: None,
     cache_control: None,
     content_disposition: None,
     content_encoding: None,
@@ -925,7 +924,6 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     content_length: None,
     content_md5: None,
     content_type: None,
-    expected_bucket_owner: None,
     expires: None,
     grant_full_control: None,
     grant_read: None,
@@ -1356,7 +1354,6 @@ async fn main() {
         change_set_type: Some("UPDATE".to_string()),
         client_token: Some(format!("sfn-ng-{}", start_time.timestamp())),
         description: Some("sfn-ng upgrade request".to_string()),
-        include_nested_stacks: None,
         notification_ar_ns: None,
         parameters: Some(stack_input.used_parameters),
         resource_types: None,
@@ -1546,8 +1543,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
         let bucket = resource.clone().physical_resource_id.expect("No physical resource id provided");
         println!("Deleting content from bucket {}", bucket.bold());
         let version_input = GetBucketVersioningRequest {
-          bucket: bucket.clone(),
-          expected_bucket_owner: None
+          bucket: bucket.clone()
         };
         if get_bucket_versioning_rek(s3.clone(), version_input, 0).await {
           let mut key_token = None;
@@ -1557,7 +1553,6 @@ async fn cleanup_resources(stack_name: String, region: Region) {
               bucket: bucket.clone(),
               delimiter: None,
               encoding_type: None,
-              expected_bucket_owner: None,
               key_marker: key_token.clone(),
               max_keys: None,
               prefix: None,
@@ -1585,7 +1580,6 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                   objects: to_be_deleted,
                   quiet: None,
                 },
-                expected_bucket_owner: None,
                 mfa: None,
                 request_payer: None,
               };
@@ -1605,7 +1599,6 @@ async fn cleanup_resources(stack_name: String, region: Region) {
               continuation_token: token.clone(),
               delimiter: None,
               encoding_type: None,
-              expected_bucket_owner: None,
               fetch_owner: None,
               max_keys: None,
               prefix: None,
@@ -1624,7 +1617,6 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                   }).collect(),
                   quiet: None,
                 },
-                expected_bucket_owner: None,
                 mfa: None,
                 request_payer: None,
               };
