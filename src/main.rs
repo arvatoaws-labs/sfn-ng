@@ -496,7 +496,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.12")
+    .version("0.2.13")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -917,6 +917,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     acl: None,
     body: Some(ByteStream::from(template_body.clone().unwrap().as_bytes().to_vec())),
     bucket: bucket.clone(),
+    bucket_key_enabled: None,
+    expected_bucket_owner: None,
     cache_control: None,
     content_disposition: None,
     content_encoding: None,
@@ -1354,6 +1356,7 @@ async fn main() {
         change_set_type: Some("UPDATE".to_string()),
         client_token: Some(format!("sfn-ng-{}", start_time.timestamp())),
         description: Some("sfn-ng upgrade request".to_string()),
+        include_nested_stacks: None,
         notification_ar_ns: None,
         parameters: Some(stack_input.used_parameters),
         resource_types: None,
@@ -1543,7 +1546,8 @@ async fn cleanup_resources(stack_name: String, region: Region) {
         let bucket = resource.clone().physical_resource_id.expect("No physical resource id provided");
         println!("Deleting content from bucket {}", bucket.bold());
         let version_input = GetBucketVersioningRequest {
-          bucket: bucket.clone()
+          bucket: bucket.clone(),
+          expected_bucket_owner: None
         };
         if get_bucket_versioning_rek(s3.clone(), version_input, 0).await {
           let mut key_token = None;
@@ -1551,6 +1555,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
           loop {
             let list_version_input = ListObjectVersionsRequest {
               bucket: bucket.clone(),
+              expected_bucket_owner: None,
               delimiter: None,
               encoding_type: None,
               key_marker: key_token.clone(),
@@ -1575,6 +1580,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
               }
               let object_delete_input = DeleteObjectsRequest {
                 bucket: bucket.clone(),
+                expected_bucket_owner: None,
                 bypass_governance_retention: None,
                 delete: Delete {
                   objects: to_be_deleted,
@@ -1596,6 +1602,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
           loop {
             let list_objects_input = ListObjectsV2Request {
               bucket: bucket.clone(),
+              expected_bucket_owner: None,
               continuation_token: token.clone(),
               delimiter: None,
               encoding_type: None,
@@ -1609,6 +1616,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
             if result.contents.is_some() {
               let object_delete_input = DeleteObjectsRequest {
                 bucket: bucket.clone(),
+                expected_bucket_owner: None,
                 bypass_governance_retention: None,
                 delete: Delete {
                   objects: result.contents.expect("No objects listed").iter().map(|object| ObjectIdentifier {
