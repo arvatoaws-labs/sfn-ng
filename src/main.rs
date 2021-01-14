@@ -1,4 +1,5 @@
 use rusoto_core::{Region, ByteStream};
+use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
 use rusoto_s3::*;
 use rusoto_sts::*;
@@ -430,8 +431,37 @@ fn string_to_static_str(s: String) -> &'static str {
   Box::leak(s.into_boxed_str())
 }
 
-async fn list_stacks(client: CloudFormationClient, matches: ArgMatches) {
-  let list_opts = matches.subcommand_matches("list").unwrap();
+#[async_recursion]
+async fn list_stacks_prep(ec2: Ec2Client, all_regions_input: DescribeRegionsRequest, list_opts: &ArgMatches, i: u64) {
+  match ec2.describe_regions(all_regions_input.clone()).await {
+    Ok(output) => match output.regions {
+      Some(regions) => {
+        for ec2_region in regions {
+          let region = map_region(&ec2_region.region_name.expect("No region name in all regions"));
+          let client = CloudFormationClient::new(region.clone());
+          list_stacks_main(client, region, list_opts).await;
+        }
+      },
+      None => {
+        panic!("No regions returned from all regions");
+      }
+    },
+    Err(e) => {
+      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      if i > 20 {
+        panic!("Retry limit reached in list stacks prep: {}", e);
+      } else {
+        println!("Something went wrong in list stacks prep (retrying in {} ms): {}", wait_time, e);
+      }
+      sleep(Duration::from_millis(wait_time));
+      list_stacks_prep(ec2, all_regions_input, list_opts, i + 1).await
+    }
+  }
+}
+
+async fn list_stacks_main(client: CloudFormationClient, region: Region, list_opts: &ArgMatches) {
+  // println!();
+  println!("Listing stacks for region {}", region.name().bright_white().bold());
   let mut list_stacks_input: ListStacksInput = Default::default();
   if list_opts.is_present("status") {
     list_stacks_input.stack_status_filter = Some(vec![list_opts.value_of("status").unwrap().to_string()]);
@@ -465,12 +495,31 @@ async fn list_stacks(client: CloudFormationClient, matches: ArgMatches) {
   list_stacks_rek(client, list_stacks_input, 0).await
 }
 
+async fn list_stacks(matches: ArgMatches) {
+  let region = Region::default();
+
+  let list_opts = matches.subcommand_matches("list").unwrap();
+  if list_opts.is_present("all-regions") {
+    let ec2 = Ec2Client::new(region.clone());
+    let all_regions_input = DescribeRegionsRequest {
+      all_regions: Some(false),
+      dry_run: None,
+      filters: None,
+      region_names: None
+    };
+    list_stacks_prep(ec2, all_regions_input, list_opts, 0).await
+  } else {
+    let client = CloudFormationClient::new(region.clone());
+    list_stacks_main(client, region, list_opts).await
+  }
+}
+
 #[async_recursion]
 async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListStacksInput, i: u64) {
   match client.list_stacks(list_stacks_input.clone()).await {
     Ok(output) => match output.stack_summaries {
       Some(stack_list) => {
-        println!("{}", "Stacks:".bold());
+        // println!("{}", "Stacks:".bold());
         for (status, grouped_stack_list) in stack_list.iter().map(|stack| (stack.stack_status.clone(), stack.clone())).into_group_map().iter().sorted_by_key(|(status, _)| status.clone()) {
           println!("{}", match_status_color(status, status).bold());
           for stack in grouped_stack_list {
@@ -496,7 +545,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.13")
+    .version("0.2.14")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -511,6 +560,11 @@ fn generate_matches() -> ArgMatches {
         .short('d')
         .long("deleted")
         .about("Include deleted stacks")
+      )
+      .arg(Arg::new("all-regions")
+        .short('a')
+        .long("all-regions")
+        .about("List stacks for each regions")
       )
     )
     .subcommand(App::new("destroy")
@@ -1340,9 +1394,7 @@ async fn main() {
       println!("{}", json_string);
     }
     Some("list") => {
-      let region = Region::default();
-      let client = CloudFormationClient::new(region.clone());
-      list_stacks(client.clone(), matches.clone()).await;
+      list_stacks(matches.clone()).await;
     }
     Some("update") => {
       let update_opts = matches.subcommand_matches("update").unwrap();
