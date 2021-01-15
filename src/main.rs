@@ -355,12 +355,21 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
       let entry = entry.unwrap();
       if entry.file_name().to_str().unwrap().to_string() == format!("{}.rb", stack_name) {
         println!("Using parameter file: {}", entry.path().display());
+        if rb_filename.len() > 0 || json_filename.len() > 0 {
+          println!("{}", "Warning: Overriding stack parameter file to be used with new finding".yellow());
+        }
         rb_filename = format!("{}", entry.path().display());
       } else if entry.file_name().to_str().unwrap().to_string() == format!("{}.json", stack_name) {
         println!("Using parameter file: {}", entry.path().display());
+        if rb_filename.len() > 0 || json_filename.len() > 0 {
+          println!("{}", "Warning: Overriding stack parameter file to be used with new finding".yellow());
+        }
         json_filename = format!("{}", entry.path().display());
       }
     }
+  }
+  if rb_filename.len() == 0 && json_filename.len() == 0 {
+    println!("{}", "Warning: no stack parameter file found".yellow());
   }
 
   // let rb_filename = format!("stack-parameters/{}.rb", stack_name);
@@ -545,7 +554,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.14")
+    .version("0.2.15")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
