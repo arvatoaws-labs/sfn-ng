@@ -554,7 +554,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.15")
+    .version("0.2.16")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -942,9 +942,14 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
   }
 
   let search_for_creator = tags_vec.iter().position(|tag| tag.key =="creator");
+  let mut me = whoami::username();
+  if me.contains("\\") {
+    let split = me.split("\\").collect::<Vec<&str>>();
+    me = split[1].to_string();
+  }
   tags_vec.push(rusoto_cloudformation::Tag {
     key: "creator".to_string(),
-    value: whoami::username()
+    value: me
   });
   match search_for_creator {
     Some(pos) => {tags_vec.swap_remove(pos);},
