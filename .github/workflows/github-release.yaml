@@ -24,6 +24,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
       - run: echo ${{matrix.TARGET}}
+      - name: Get sfn-ng Version
+        run: |
+          echo "::set-output name=version::$(cat Cargo.toml | grep \"^version\" | awk '{ print $3; }' | tr -d '\"')\n"
+        id: s_version
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -41,8 +45,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: ${{matrix.TITLE}}-${{steps.s_version.outputs.version}}
+          release_name: Release ${{steps.s_version.outputs.version}} for ${{matrix.TITLE}}
           draft: false
           prerelease: false
       - name: Upload Release Asset
