@@ -19,6 +19,8 @@ use std::str::FromStr;
 use std::process::{Command, Stdio};
 use string_morph;
 use walkdir::WalkDir;
+use convert_case::{Case, Casing};
+use string_morph::Morph;
 
 fn match_change_color(change_type: String, replacement: bool, msg: String) -> ColoredString {
   return match &change_type[..] {
@@ -325,11 +327,14 @@ fn get_template_params(json: Value, is_update: bool) -> Vec<Parameter> {
   }
 }
 
+
+
 #[derive(Clone)]
 struct StackParameterFile {
   apply_stacks: Option<Vec<String>>,
   parameters: Option<HashMap<String, String>>,
   mappings: Option<HashMap<String, String>>,
+  apply_mappings: Option<Vec<MappingValue>>,
   tags: Option<HashMap<String, String>>,
   template: Option<String>,
   region: Region
@@ -413,6 +418,30 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
       return (key.clone(), value_to_string(&value.clone()).expect("Mappings value isn't string convertible"));
     }).collect());
   }
+  let apply_mappings_raw = content.get("apply_mappings");
+  let apply_mappings: Option<Vec<MappingValue>> = match apply_mappings_raw {
+    Some(raw_content) => {
+      Some(raw_content.as_object().expect("Apply Mappings malformed in stack parameter file").iter().map(|(key, value)| {
+        let obj = value.as_object().expect("Apply Mappings malformed in stack parameter file");
+        let output = MappingValue {
+          stack_name: match obj.get("stack_name") {
+            Some(stack_name) => value_to_string(stack_name),
+            None => None
+          },
+          input_name: key.to_string().to_pascal_case(),
+          output_name: value_to_string(obj.get("output_name").expect("Apply Mappings must contain the name of an output")).expect("Apply Mappings Output is not string convertible"),
+          region: match obj.get("region") {
+            Some(region) => Some(map_region(&*value_to_string(region).expect("Region in apply mappings not string covertible"))),
+            None => None
+          }
+        };
+        // println!("Found mapping {}, {}, {}, {}", output.clone().stack_name.unwrap(), output.clone().region.unwrap().name(), output.clone().input_name, output.clone().output_name);
+        return output;
+      }).collect())
+    },
+    None => None
+  };
+
   let parameters_raw = content.get("parameters");
   let mut parameters: Option<HashMap<String, String>> = None;
   if parameters_raw.is_some() {
@@ -430,6 +459,7 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
     apply_stacks,
     parameters,
     mappings,
+    apply_mappings,
     tags,
     template,
     region
@@ -554,7 +584,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.17")
+    .version("0.2.18")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -848,6 +878,21 @@ async fn get_old_template_body_rek(stack_name: String, region: Region, i: u64) -
   }
 }
 
+#[derive(Clone)]
+struct MappingValue {
+  stack_name: Option<String>,
+  region: Option<Region>,
+  output_name: String,
+  input_name: String
+}
+
+#[derive(Clone)]
+struct ApplyStackParameter {
+  stack_name: String,
+  region: Region,
+  outputs: Vec<Parameter>
+}
+
 // if upgrade check for previous values of params & tags as well.
 async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_upgrade: bool) -> StackInput {
   let stack_name = opts.value_of("STACKNAME").expect("No Stack named").to_string();
@@ -876,21 +921,51 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     None => Vec::new()
   };
 
-  let mut mappings: HashMap<String, String> = match opts.values_of("apply-mapping") {
+  /*
+
+    paramaters do
+      input 0
+    end
+    mappings do
+      output 'Input'
+    end
+    apply_mappings do
+      input do
+        region 'us-east-1'
+        stack 'stack'
+        outputName 'Output'
+      end
+     end
+    apply_stacks [
+      us_east_1__stack
+    ]
+   */
+
+  let mut mappings: Vec<MappingValue> = match opts.values_of("apply-mapping") {
     Some(list) => list.collect::<Vec<_>>().iter().map(|input| {
       let pair = input.split("=").collect::<Vec<&str>>();
-      return (pair[0].to_string().clone(), pair[1].to_string().clone());
+      // TODO: allow for stack & region let enc_output = pair[0].to_string().clone().split("__");
+      return MappingValue {
+        region: None,
+        stack_name: None,
+        output_name: pair[0].to_string().clone(),
+        input_name: pair[1].to_string().clone()
+      };
     }).collect(),
-    None => HashMap::new()
+    None => vec!()
   };
   if stack_parameter_file.clone().is_some() {
     let stack_parameter_file = stack_parameter_file.clone().unwrap();
-    if stack_parameter_file.mappings.is_some() {
-      for (key, value) in stack_parameter_file.mappings.unwrap() {
-        if !mappings.contains_key(&*key.clone()) {
-          mappings.insert(key, value);
-        }
-      }
+    mappings.extend(stack_parameter_file.mappings.unwrap_or(HashMap::new()).iter().map(|(key, value)| {
+      return MappingValue {
+        region: None,
+        stack_name: None,
+        output_name: key.to_string(),
+        input_name: value.to_string()
+      };
+    }).collect::<Vec<MappingValue>>());
+    if stack_parameter_file.apply_mappings.is_some() {
+      mappings.extend(stack_parameter_file.apply_mappings.unwrap());
     }
   }
 
@@ -1019,7 +1094,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
   };
   s3.put_object(upload_template_input).await.expect("Template couldn't be uploaded to S3");
 
-  let mut apply_stack_parameters: Vec<Parameter> = vec![];
+  let mut apply_stack_parameters: Vec<ApplyStackParameter> = vec![];
   let mut stacks: Vec<&str> = vec![];
   if stack_parameter_file.clone().is_some() {
     let stack_parameter_file = stack_parameter_file.clone().unwrap();
@@ -1040,10 +1115,19 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     if stack_parts.len() > 1 {
       // Camel Cased: let region = stack_parts[0].split("_").collect::<Vec<&str>>().iter().map(upcast).collect::<Vec<String>>().join("");
       let region = stack_parts[0].split("_").collect::<Vec<&str>>().join("-");
-      let client = CloudFormationClient::new(map_region(&region));
-      apply_stack_parameters.append(&mut lookup_stack_outputs(stack_parts[1].to_string(), client.clone()).await);
+      let aws_region = map_region(&region);
+      let client = CloudFormationClient::new(aws_region.clone());
+      apply_stack_parameters.push( ApplyStackParameter {
+        outputs: lookup_stack_outputs(stack_parts[1].to_string(), client.clone()).await,
+        region: aws_region,
+        stack_name: stack_parts[1].to_string()
+      });
     } else {
-      apply_stack_parameters.append(&mut lookup_stack_outputs(stack.to_string(), client.clone()).await);
+      apply_stack_parameters.push(ApplyStackParameter {
+        outputs: lookup_stack_outputs(stack.to_string(), client.clone()).await,
+        region: region.clone(),
+        stack_name: stack.to_string()
+      });
     }
   }
 
@@ -1075,21 +1159,44 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
         }
       }
     }
-    for apply_param in apply_stack_parameters.clone() {
-      let matching_mapping = mappings.iter().find(|(_key, value)| value.to_string() == default_param.clone().parameter_key.unwrap());
-      if matching_mapping.is_some() {
-        let (mapped_output_key, mapped_output_value) = matching_mapping.unwrap();
-        if apply_param.clone().parameter_key.unwrap() == mapped_output_key.to_string() {
-          return Parameter {
-            parameter_key: Some(mapped_output_value.to_string()),
-            parameter_value: apply_param.parameter_value,
-            resolved_value: apply_param.resolved_value,
-            use_previous_value: apply_param.use_previous_value
-          };
-        }
-      } else {
-        if apply_param.parameter_key == default_param.parameter_key {
-          return apply_param;
+    for apply_param_stack in apply_stack_parameters.clone() {
+      for apply_param in apply_param_stack.clone().outputs {
+        let matching_mapping = mappings.iter().find(|value| {
+          let result1 = value.input_name.to_string() == default_param.clone().parameter_key.unwrap();
+          let result2 = value.region.is_none() || (*value.region.as_ref().unwrap() == apply_param_stack.region);
+          let result3 = value.stack_name.is_none() || (*value.stack_name.as_ref().unwrap() == apply_param_stack.stack_name);
+          let result = result1 && result2 && result3;
+          // if result1 && result3 {
+          //   println!("Debug match {} {} {} {} {} {} {} {} {} {}",
+          //            result1,
+          //            result2,
+          //            result3,
+          //            default_param.clone().parameter_key.unwrap(),
+          //            value.input_name.to_string(),
+          //            value.region.as_ref().unwrap().name(),
+          //            apply_param_stack.region.name(),
+          //            value.stack_name.as_ref().unwrap(),
+          //            value.output_name.to_string(),
+          //            apply_param.clone().parameter_value.unwrap()
+          //   );
+          // }
+          return result;
+        });
+        if matching_mapping.is_some() {
+          let mapping_value = matching_mapping.unwrap();
+          if apply_param.clone().parameter_key.unwrap() == mapping_value.output_name.to_string() {
+            println!("Mapping Matched input:{} output:{}", mapping_value.input_name.to_string(), mapping_value.output_name.to_string());
+            return Parameter {
+              parameter_key: Some(default_param.clone().parameter_key.unwrap()),
+              parameter_value: apply_param.parameter_value,
+              resolved_value: apply_param.resolved_value,
+              use_previous_value: apply_param.use_previous_value
+            };
+          }
+        } else {
+          if apply_param.parameter_key == default_param.parameter_key {
+            return apply_param;
+          }
         }
       }
     }
