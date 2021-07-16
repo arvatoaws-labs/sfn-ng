@@ -19,95 +19,10 @@ use std::str::FromStr;
 use std::process::{Command, Stdio};
 use string_morph;
 use walkdir::WalkDir;
-use convert_case::{Case, Casing};
 use string_morph::Morph;
 
-fn match_change_color(change_type: String, replacement: bool, msg: String) -> ColoredString {
-  return match &change_type[..] {
-    "Remove" => msg.red(),
-    "Modify" => if replacement { msg.black().on_yellow() } else { msg.yellow() },
-    "Add" => msg.green(),
-    _ => msg.magenta()
-  };
-}
-
-fn match_status_color(status: &str, msg: &str) -> ColoredString {
-  return match status {
-    "CREATE_IN_PROGRESS" | "DELETE_IN_PROGRESS" | "UPDATE_IN_PROGRESS" | "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS" | "REVIEW_IN_PROGRESS" | "IMPORT_IN_PROGRESS" => msg.bright_white().italic(),
-    "CREATE_FAILED" | "ROLLBACK_FAILED" | "DELETE_FAILED" | "UPDATE_ROLLBACK_FAILED" | "IMPORT_ROLLBACK_FAILED" => msg.red(),
-    "ROLLBACK_IN_PROGRESS" | "ROLLBACK_COMPLETE" | "UPDATE_ROLLBACK_IN_PROGRESS" | "UPDATE_ROLLBACK_COMPLETE" | "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS" | "IMPORT_ROLLBACK_IN_PROGRESS" | "IMPORT_ROLLBACK_COMPLETE" => msg.yellow(),
-    "CREATE_COMPLETE" | "UPDATE_COMPLETE" | "IMPORT_COMPLETE" => msg.green(),
-    "DELETE_COMPLETE" => msg.white().dimmed(),
-    _ => msg.magenta()
-  };
-}
-
-// TODO: improve and include more details and scope info
-fn pretty_print_resource_change(change: Change) {
-  match change.resource_change {
-    Some(resource) => {
-      let action = resource.action.unwrap_or("-".to_string());
-      // let details = resource.details;
-      let logical_resource_id = resource.logical_resource_id.unwrap_or("-".to_string());
-      let physical_resource_id = resource.physical_resource_id.unwrap_or("-".to_string());
-      let replacement = resource.replacement.unwrap_or("-".to_string());
-      let resource_type = resource.resource_type.unwrap_or("-".to_string());
-      let scope = resource.scope.unwrap_or(vec!["unknown".to_string()]).join(",");
-
-      println!("{}", match_change_color(action.clone(), replacement == "True", format!("{:6.6} {:7.7} {:50.50} {:50.50} {:70.70} {:}", action, replacement, resource_type, logical_resource_id, physical_resource_id, scope)));
-    }
-    None => {}
-  }
-}
-
-fn pretty_panic(message: String) {
-  println!("{}", message.red().bold());
-  ::std::process::exit(1);
-}
-
-fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTime<Local>) {
-  events.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
-  for i in 0..events.len() {
-
-    let line = &events[i];
-    let event_time = Utc.datetime_from_str(&line.timestamp.as_ref(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
-    if start_time.lt(&event_time) {
-      println!("{:25.25} {:70.70} {:50.50} {:}",
-             match_status_color(line.resource_status.as_ref().unwrap(), line.timestamp.as_ref()),
-             match_status_color(line.resource_status.as_ref().unwrap(), line.logical_resource_id.as_ref().unwrap()),
-             match_status_color(line.resource_status.as_ref().unwrap(), line.resource_status.as_ref().unwrap()),
-             match_status_color(line.resource_status.as_ref().unwrap(), line.resource_status_reason.as_ref().unwrap_or(&"".to_string()))
-      );
-    }
-  }
-}
-
-async fn lookup_stackid_to_name(stack_name: String, client: CloudFormationClient) -> String {
-  return lookup_stackid_to_name_rek(stack_name, client, 0).await;
-}
-
-#[async_recursion]
-async fn lookup_stackid_to_name_rek(stack_name: String, client: CloudFormationClient, i: u64) -> String {
-  let describe_input = DescribeStacksInput {
-    next_token: None,
-    stack_name: Some(stack_name.clone()),
-  };
-  return match client.describe_stacks(describe_input.clone()).await {
-    Ok(result) => {
-      result.stacks.expect("Something went wrong describing stack").iter().max_by_key(|s| s.creation_time.clone()).expect("Max failed in stack describe").stack_id.clone().expect("Something went wrong describing stack")
-    },
-    Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
-      if i > 20 {
-        panic!("Retry limit reached in lookup stackid to name: {}", e);
-      } else {
-        println!("Something went wrong in lookup stackid to name (retrying in {} ms): {}", wait_time, e);
-      }
-      sleep(Duration::from_millis(wait_time));
-      lookup_stackid_to_name_rek(stack_name, client, i+1).await
-    }
-  }
-}
+pub mod utils;
+pub use utils::*;
 
 async fn lookup_stack_outputs(stack_name: String, client: CloudFormationClient) -> Vec<Parameter> {
   return lookup_stack_outputs_rek(stack_name, client, 0).await;
@@ -259,6 +174,7 @@ async fn generate_events_output_rek(events_input: DescribeStackEventsInput, clie
 
 #[async_recursion]
 async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClient, region: Region, start_time: DateTime<Local>) {
+  println!("DEBUG start poll");
   let events_input = DescribeStackEventsInput {
     next_token: None,
     stack_name: stack_id.clone(),
@@ -347,8 +263,6 @@ fn get_template_params(json: Value, is_update: bool) -> Vec<Parameter> {
   }
 }
 
-
-
 #[derive(Clone)]
 struct StackParameterFile {
   apply_stacks: Option<Vec<String>>,
@@ -358,16 +272,6 @@ struct StackParameterFile {
   tags: Option<HashMap<String, String>>,
   template: Option<String>,
   region: Region
-}
-
-fn value_to_string(v: &Value) -> Option<String> {
-  let mut val = None;
-  match v {
-    e @ Value::Number(_) | e @ Value::Bool(_) => val = Some(e.to_string()),
-    Value::String(s) => val = Some(s.to_string()),
-    _ => {}
-  }
-  return val;
 }
 
 fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
@@ -435,7 +339,7 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   let mut mappings: Option<HashMap<String, String>> = None;
   if mappings_raw.is_some() {
     mappings = Some(mappings_raw.unwrap().as_object().expect("Mappings malformed in stack parameter file").iter().map(|(key, value)| {
-      return (key.clone(), value_to_string(&value.clone()).expect("Mappings value isn't string convertible"));
+      return (string_morph::to_pascal_case(key), value_to_string(&value.clone()).expect("Mappings value isn't string convertible").to_pascal_case());
     }).collect());
   }
   let apply_mappings_raw = content.get("apply_mappings");
@@ -449,7 +353,7 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
             None => None
           },
           input_name: key.to_string().to_pascal_case(),
-          output_name: value_to_string(obj.get("output_name").expect("Apply Mappings must contain the name of an output")).expect("Apply Mappings Output is not string convertible"),
+          output_name: value_to_string(obj.get("output_name").expect("Apply Mappings must contain the name of an output")).expect("Apply Mappings Output is not string convertible").to_pascal_case(),
           region: match obj.get("region") {
             Some(region) => Some(map_region(&*value_to_string(region).expect("Region in apply mappings not string covertible"))),
             None => None
@@ -625,6 +529,14 @@ fn generate_matches() -> ArgMatches {
         .long("all-regions")
         .about("List stacks for each regions")
       )
+    )
+    .subcommand(App::new("attach-event-stream")
+        .about("Attaches to a running CloudFormation operations event stream")
+        .arg(Arg::new("STACKNAME")
+          .about("Name of the stack to follow")
+          .required(true)
+          .index(1)
+        )
     )
     .subcommand(App::new("destroy")
       .about("Destroys a stack")
@@ -968,8 +880,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       return MappingValue {
         region: None,
         stack_name: None,
-        output_name: pair[0].to_string().clone(),
-        input_name: pair[1].to_string().clone()
+        output_name: string_morph::to_pascal_case(pair[0]),
+        input_name: string_morph::to_pascal_case(pair[1])
       };
     }).collect(),
     None => vec!()
@@ -980,8 +892,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       return MappingValue {
         region: None,
         stack_name: None,
-        output_name: key.to_string(),
-        input_name: value.to_string()
+        output_name: string_morph::to_pascal_case(key),
+        input_name: string_morph::to_pascal_case(value)
       };
     }).collect::<Vec<MappingValue>>());
     if stack_parameter_file.apply_mappings.is_some() {
@@ -1078,6 +990,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       panic!("No template specified for create stack");
     }
   }
+
   let upload_template_input = PutObjectRequest {
     acl: None,
     body: Some(ByteStream::from(template_body.clone().unwrap().as_bytes().to_vec())),
@@ -1532,6 +1445,20 @@ fn ruby_stack_parameters(rb_filename: String) -> String {
 async fn main() {
   let matches = generate_matches();
   match matches.subcommand_name() {
+    Some("attach-event-stream") => {
+      println!("DEBUG match");
+      let start_time = chrono::offset::Local::now() - chrono::Duration::minutes(30);
+      let attach_opts = matches.subcommand_matches("attach-event-stream").unwrap();
+      let stack_name = attach_opts.value_of("STACKNAME").expect("No Stack named").to_string();
+      let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
+      let mut region = Region::default();
+      if stack_parameter_file.clone().is_some() {
+        region = stack_parameter_file.clone().unwrap().region;
+      }
+      let client = CloudFormationClient::new(region.clone());
+
+      poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client, region, start_time).await;
+    }
     Some("convert-parameter-file") => {
       let convert_opts = matches.subcommand_matches("convert-parameter-file").unwrap();
       let rb_filename = convert_opts.value_of("file").expect("No file provided").to_string();
