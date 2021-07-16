@@ -257,7 +257,8 @@ async fn generate_events_output_rek(events_input: DescribeStackEventsInput, clie
   }
 }
 
-async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClient, start_time: DateTime<Local>) {
+#[async_recursion]
+async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClient, region: Region, start_time: DateTime<Local>) {
   let events_input = DescribeStackEventsInput {
     next_token: None,
     stack_name: stack_id.clone(),
@@ -294,6 +295,25 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
 
   // TODO: Final printout? Status?, Exit-Code!
   let stack_result = client.describe_stacks(describe_input.clone()).await.expect("Something went wrong describing stack").stacks.expect("Something went wrong describing stack");
+  
+  if [
+    "CREATE_FAILED"
+  ].contains(&stack_result[0].stack_status.as_str()) {
+    let delete_stack_input = DeleteStackInput {
+      client_request_token: None,
+      retain_resources: None,
+      role_arn: None,
+      stack_name: stack_id.clone().expect("Something went wrong deleting failed stack")
+    };
+    if always_yes_or_ask(false, "destroy stack") {
+      cleanup_resources(stack_id.clone().expect("Something went wrong deleting failed stack"), region.clone()).await;
+      delete_stack_rek(client.clone(), delete_stack_input, 0).await;
+      poll_stack_status(Some(lookup_stackid_to_name(stack_id.expect("Something went wrong deleting failed stack"), client.clone()).await), client.clone(), region.clone(), start_time).await;
+    } else {
+      println!("Canceling destroy stack");
+    }
+  }
+  
   if [
     "CREATE_COMPLETE",
     "UPDATE_COMPLETE"
@@ -584,7 +604,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.18")
+    .version("0.2.19")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -768,11 +788,11 @@ fn generate_matches() -> ArgMatches {
 }
 
 #[async_recursion]
-async fn create_stack_rek(poll: bool, client: CloudFormationClient, create_stack_input: CreateStackInput, start_time: DateTime<Local>, i: u64) {
+async fn create_stack_rek(poll: bool, client: CloudFormationClient, region: Region, create_stack_input: CreateStackInput, start_time: DateTime<Local>, i: u64) {
   match client.create_stack(create_stack_input.clone()).await {
     Ok(output) => {
       if poll {
-        poll_stack_status(output.stack_id.clone(), client, start_time).await;
+        poll_stack_status(output.stack_id.clone(), client, region.clone(), start_time).await;
       }
     }
     Err(e) => {
@@ -783,7 +803,7 @@ async fn create_stack_rek(poll: bool, client: CloudFormationClient, create_stack
         println!("Something went wrong creating stacks (retrying in {} ms): {}", wait_time, e);
       }
       sleep(Duration::from_millis(wait_time));
-      create_stack_rek(poll, client, create_stack_input, start_time, i+1).await
+      create_stack_rek(poll, client, region.clone(), create_stack_input, start_time, i+1).await
     }
   }
 }
@@ -932,8 +952,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     apply_mappings do
       input do
         region 'us-east-1'
-        stack 'stack'
-        outputName 'Output'
+        stack_name 'stack'
+        output_name 'Output'
       end
      end
     apply_stacks [
@@ -1300,11 +1320,11 @@ async fn create_changeset_diff_display(client: CloudFormationClient, describe_ch
 }
 
 #[async_recursion]
-async fn execute_change_set_rek(poll: bool, client: CloudFormationClient, stack_id: Option<String>, execute_changeset_input: ExecuteChangeSetInput, start_time: DateTime<Local>, i: u64) {
+async fn execute_change_set_rek(poll: bool, client: CloudFormationClient, region: Region, stack_id: Option<String>, execute_changeset_input: ExecuteChangeSetInput, start_time: DateTime<Local>, i: u64) {
   match client.execute_change_set(execute_changeset_input.clone()).await {
     Ok(_output) => {
       if poll {
-        poll_stack_status(stack_id.clone(), client, start_time).await;
+        poll_stack_status(stack_id.clone(), client, region.clone(), start_time).await;
       }
     }
     Err(e) => {
@@ -1315,13 +1335,13 @@ async fn execute_change_set_rek(poll: bool, client: CloudFormationClient, stack_
         println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
       }
       sleep(Duration::from_millis(wait_time));
-      execute_change_set_rek(poll, client, stack_id, execute_changeset_input, start_time, i+1).await
+      execute_change_set_rek(poll, client, region.clone(), stack_id, execute_changeset_input, start_time, i+1).await
     }
   }
 }
 
 #[async_recursion]
-async fn update_stack_rek(poll: bool, client: CloudFormationClient, create_changeset_input: CreateChangeSetInput, always_yes: bool, start_time: DateTime<Local>, i: u64) {
+async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Region, create_changeset_input: CreateChangeSetInput, always_yes: bool, start_time: DateTime<Local>, i: u64) {
   match client.create_change_set(create_changeset_input.clone()).await {
     Ok(output) => {
       let describe_change_set_input = DescribeChangeSetInput {
@@ -1338,7 +1358,7 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, create_chang
           client_request_token: None,
           stack_name: Some(create_changeset_input.stack_name)
         };
-        execute_change_set_rek(poll, client, output.stack_id, execute_change_set_input, start_time, 0).await;
+        execute_change_set_rek(poll, client, region.clone(), output.stack_id, execute_change_set_input, start_time, 0).await;
       }
     }
     Err(e) => {
@@ -1349,7 +1369,7 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, create_chang
         println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
       }
       sleep(Duration::from_millis(wait_time));
-      update_stack_rek(poll, client, create_changeset_input, always_yes, start_time, i+1).await
+      update_stack_rek(poll, client, region.clone(), create_changeset_input, always_yes, start_time, i+1).await
     }
   }
 }
@@ -1559,7 +1579,7 @@ async fn main() {
 
       println!("Polling: {}", poll);
 
-      update_stack_rek(poll, stack_input.client, create_changeset_input, always_yes, start_time, 0).await;
+      update_stack_rek(poll, stack_input.client, stack_input.region, create_changeset_input, always_yes, start_time, 0).await;
     }
     Some("create") => {
       let create_opts = matches.subcommand_matches("create").unwrap();
@@ -1595,7 +1615,7 @@ async fn main() {
         },
         None => true
       };
-      create_stack_rek(poll, stack_input.client, create_stack_input, start_time, 0).await;
+      create_stack_rek(poll, stack_input.client, stack_input.region, create_stack_input, start_time, 0).await;
     }
     Some("destroy") => {
       let destroy_opts = matches.subcommand_matches("destroy").unwrap();
@@ -1625,7 +1645,7 @@ async fn main() {
         cleanup_resources(stack_name.clone(), region.clone()).await;
         delete_stack_rek(client.clone(), delete_stack_input, 0).await;
         if poll {
-          poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client.clone(), start_time).await;
+          poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client.clone(), region.clone(), start_time).await;
         }
       } else {
         println!("Canceling destroy stack");
