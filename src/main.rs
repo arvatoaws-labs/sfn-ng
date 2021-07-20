@@ -20,6 +20,7 @@ use std::process::{Command, Stdio};
 use string_morph;
 use walkdir::WalkDir;
 use string_morph::Morph;
+use json_structural_diff::JsonDiff;
 
 pub mod utils;
 pub use utils::*;
@@ -508,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.19")
+    .version("0.2.20")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -536,6 +537,12 @@ fn generate_matches() -> ArgMatches {
           .about("Name of the stack to follow")
           .required(true)
           .index(1)
+        )
+        .arg(Arg::new("time-backwards")
+            .short('t')
+            .long("time-backwards")
+            .takes_value(true)
+            .about("How long backwards (in minutes) to start printing events from")
         )
     )
     .subcommand(App::new("destroy")
@@ -659,6 +666,12 @@ fn generate_matches() -> ArgMatches {
         .long("defaults")
         .takes_value(false)
         .about("Automatically accept default values")
+      )
+      .arg(Arg::new("diff")
+        .short('j')
+        .long("diff")
+        .takes_value(true)
+        .about("Display JSON diff of templates (default: true)")
       )
       .arg(Arg::new("file")
         .short('f')
@@ -979,6 +992,42 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
   if template_file.is_some() {
     template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
     let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
+
+    let diff = match opts.value_of("diff") {
+      Some(diff_value) => match diff_value {
+        "true" => true,
+        _ => false
+      },
+      None => true
+    };
+
+    if is_upgrade && diff {
+      let old_template = serde_json::from_str(&*get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await).unwrap();
+      let json_diffs = JsonDiff::diff_string(&template_content, &old_template, false);
+      match json_diffs {
+        Some(json_diff) => {
+          println!("Changes in template:");
+          for line in json_diff.split("\n") {
+            match line.chars().nth(0) {
+              Some('+') => {
+                println!("{}", line.green());
+              },
+              Some('-') => {
+                println!("{}", line.red());
+              },
+              Some('~') => {
+                println!("{}", line.yellow());
+              },
+              _ => {
+                println!("{}", line.white().dimmed());
+              }
+            };
+          }
+        },
+        None => { println!("No changes in template"); }
+      }
+      println!("\n");
+    }
     template_parameters = get_template_params(template_content, false); // TODO: yaml support
     path = format!("{}/{}", template_file.expect("No template file specified").to_string(), start_time.timestamp());
   } else {
@@ -1147,13 +1196,12 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
           use_previous_value: param.clone().use_previous_value
         };
       }
-    } else {
-      if !dirty_flag_parameter_header {
-        println!("Parameters for StackName");
-        dirty_flag_parameter_header = true;
-      }
     }
-    
+
+    if !dirty_flag_parameter_header {
+      println!("Parameters for StackName");
+      dirty_flag_parameter_header = true;
+    }
     let mut input = String::new();
     print!("{}?:[{}] ", param.clone().parameter_key.unwrap().bold(), param.clone().parameter_value.unwrap_or(String::from("")).italic());
     stdout().flush().unwrap();
@@ -1446,9 +1494,8 @@ async fn main() {
   let matches = generate_matches();
   match matches.subcommand_name() {
     Some("attach-event-stream") => {
-      println!("DEBUG match");
-      let start_time = chrono::offset::Local::now() - chrono::Duration::minutes(30);
       let attach_opts = matches.subcommand_matches("attach-event-stream").unwrap();
+      let start_time = chrono::offset::Local::now() - chrono::Duration::minutes(attach_opts.value_of("time-backwards").unwrap_or("5").parse::<i64>().expect("Time backwards is not an integer"));
       let stack_name = attach_opts.value_of("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
       let mut region = Region::default();
