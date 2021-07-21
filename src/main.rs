@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.20")
+    .version("0.2.21")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1003,7 +1003,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
 
     if is_upgrade && diff {
       let old_template = serde_json::from_str(&*get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await).unwrap();
-      let json_diffs = JsonDiff::diff_string(&template_content, &old_template, false);
+      let json_diffs = JsonDiff::diff_string(&old_template, &template_content, false);
       match json_diffs {
         Some(json_diff) => {
           println!("Changes in template:");
