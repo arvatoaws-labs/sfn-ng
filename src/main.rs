@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.21")
+    .version("0.2.22")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -989,6 +989,12 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
   let template_parameters: Vec<Parameter>;
   let path: String;
   let template_body: Option<String>;
+  let mut old_params: Vec<Parameter> = vec![];
+  let mut old_params_map: HashMap<String, ColoredString> = HashMap::new();
+  if is_upgrade {
+    old_params = get_old_stack_parameters_rek(stack_name.clone(), region.clone(), 0).await;
+    old_params_map = old_params.iter().map(|param| (param.parameter_key.clone().expect("Old parameter key not set"), param.parameter_value.clone().expect("Old parameter value not set").dimmed())).collect();
+  }
   if template_file.is_some() {
     template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
     let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
@@ -1032,7 +1038,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     path = format!("{}/{}", template_file.expect("No template file specified").to_string(), start_time.timestamp());
   } else {
     if is_upgrade {
-      template_parameters = get_old_stack_parameters_rek(stack_name.clone(), region.clone(), 0).await;
+      template_parameters = old_params;
       template_body = Some(get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await);
       path = format!("without-new-template/{}/{}", stack_name.clone(), start_time.timestamp());
     } else {
@@ -1203,7 +1209,15 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       dirty_flag_parameter_header = true;
     }
     let mut input = String::new();
-    print!("{}?:[{}] ", param.clone().parameter_key.unwrap().bold(), param.clone().parameter_value.unwrap_or(String::from("")).italic());
+    if is_upgrade {
+      let new_word = "new".italic();
+      let old = old_params_map.get(&*param.clone().parameter_key.unwrap()).unwrap_or(&new_word);
+      let new = param.clone().parameter_value.unwrap_or(String::from("")).italic();
+      let divider = if new.clone().normal().clear().eq(&old.clone().normal().clear()) { "=" } else { "→" };
+      print!("{}?:[{}{}{}] ", param.clone().parameter_key.unwrap().bold(), old, divider, new);
+    } else {
+      print!("{}?:[{}] ", param.clone().parameter_key.unwrap().bold(), param.clone().parameter_value.unwrap_or(String::from("")).italic());
+    }
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect("Cancel Stack creation");
     input.pop();
