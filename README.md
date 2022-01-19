@@ -1,4 +1,5 @@
 # sfn-ng
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B13331%2Fgit%40github.com%3Aarvatoaws-labs%2Fsfn-ng.git.svg?type=shield)](https://app.fossa.com/projects/custom%2B13331%2Fgit%40github.com%3Aarvatoaws-labs%2Fsfn-ng.git?ref=badge_shield)
 
 Example Stack Config:
 ```ruby
