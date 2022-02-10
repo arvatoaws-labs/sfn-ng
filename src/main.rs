@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.23")
+    .version("0.2.24")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -666,6 +666,12 @@ fn generate_matches() -> ArgMatches {
         .long("defaults")
         .takes_value(false)
         .about("Automatically accept default values")
+      )
+      .arg(Arg::new("changed-params")
+        .short('D')
+        .long("changed-params")
+        .takes_value(false)
+        .about("Only show the parameters that differ from the currently deployed stack")
       )
       .arg(Arg::new("diff")
         .short('j')
@@ -1203,21 +1209,33 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
         };
       }
     }
-
-    if !dirty_flag_parameter_header {
-      println!("Parameters for StackName");
-      dirty_flag_parameter_header = true;
-    }
-    let mut input = String::new();
     if is_upgrade {
       let new_word = "new".italic();
       let old = old_params_map.get(&*param.clone().parameter_key.unwrap()).unwrap_or(&new_word);
       let new = param.clone().parameter_value.unwrap_or(String::from("")).italic();
-      let divider = if new.clone().normal().clear().eq(&old.clone().normal().clear()) { "=" } else { "→" };
+      let not_changed = new.clone().normal().clear().eq(&old.clone().normal().clear());
+      if opts.is_present("changed-params") && not_changed {
+        return Parameter {
+          parameter_key: param.clone().parameter_key,
+          parameter_value: param.clone().parameter_value,
+          resolved_value: param.clone().resolved_value,
+          use_previous_value: param.clone().use_previous_value
+        };
+      }
+      if !dirty_flag_parameter_header {
+        println!("Parameters for StackName");
+        dirty_flag_parameter_header = true;
+      }
+      let divider = if not_changed { "=" } else { "→" };
       print!("{}?:[{}{}{}] ", param.clone().parameter_key.unwrap().bold(), old, divider, new);
     } else {
+      if !dirty_flag_parameter_header {
+        println!("Parameters for StackName");
+        dirty_flag_parameter_header = true;
+      }
       print!("{}?:[{}] ", param.clone().parameter_key.unwrap().bold(), param.clone().parameter_value.unwrap_or(String::from("")).italic());
     }
+    let mut input = String::new();
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect("Cancel Stack creation");
     input.pop();
