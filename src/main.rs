@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.24")
+    .version("0.2.25")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1819,7 +1819,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                 mfa: None,
                 request_payer: None,
               };
-              delete_objects_rek(s3.clone(), object_delete_input, 0);
+              delete_objects_rek(s3.clone(), object_delete_input, 0).await;
             }
             key_token = result.next_key_marker;
             version_id_marker = result.next_version_id_marker;
@@ -1858,7 +1858,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                 mfa: None,
                 request_payer: None,
               };
-              delete_objects_rek(s3.clone(), object_delete_input, 0);
+              delete_objects_rek(s3.clone(), object_delete_input, 0).await;
             }
             token = result.continuation_token;
             if !result.is_truncated.unwrap_or(false) {
