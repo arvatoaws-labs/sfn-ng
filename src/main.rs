@@ -1,8 +1,8 @@
 use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
-use rusoto_s3::*;
-use rusoto_sts::*;
+use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest};
+use rusoto_sts::{StsClient, GetCallerIdentityRequest, Sts};
 use clap::{Arg, App, ArgMatches};
 use colored::*;
 use itertools::Itertools;
@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.25")
+    .version("0.2.26")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1367,6 +1367,52 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
   }
 }
 
+async fn tag_bucket(client: S3Client, name: String) {
+  let get_tags = GetBucketTaggingRequest {
+    bucket: name.clone(),
+    expected_bucket_owner: None,
+  };
+  match client.get_bucket_tagging(get_tags).await {
+    Ok(tags) => {
+      let mut tag_set = tags.tag_set;
+      match tag_set.iter().position(|x| x.key == "BackupPlan") {
+        Some(i) => {
+          if tag_set[i].value == "none" {
+            return;
+          } else {
+            tag_set[i].value = "none".to_string();
+          }
+        }
+        None => {
+          tag_set.push(BucketTag {
+            key: "BackupPlan".to_string(),
+            value: "none".to_string()
+          });
+        }
+      }
+      let tag_input = PutBucketTaggingRequest {
+        bucket: name.clone(),
+        content_md5: None,
+        expected_bucket_owner: None,
+        tagging: BucketTagging {
+          tag_set
+        }
+      };
+      match client.put_bucket_tagging(tag_input).await {
+        Ok(_) => {
+          println!("Tagged bucket {}", name);
+        }
+        Err(e) => {
+          println!("Error tagging bucket {}: {}", name, e);
+        }
+      }
+    }
+    Err(e) => {
+      println!("Error getting tags for bucket {}: {}", name, e);
+    }
+  }
+}
+
 #[async_recursion]
 async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u64) -> String {
   let bucket_configuration: Option<CreateBucketConfiguration>;
@@ -1386,7 +1432,8 @@ async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u6
     grant_read_acp: None,
     grant_write: None,
     grant_write_acp: None,
-    object_lock_enabled_for_bucket: None
+    object_lock_enabled_for_bucket: None,
+
   };
   match client.create_bucket(create_input).await {
     Ok(_) => {
@@ -1416,24 +1463,26 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
   match sts.get_caller_identity(caller_identity_input).await {
     Ok(identity) => {
       let name = format!("sfn-ng-{}-{}", region.name(), identity.account.unwrap());
-
+      let result: String;
       match client.list_buckets().await {
         Ok(bucket_output) => {
           match bucket_output.buckets {
             Some(buckets) => {
               match buckets.iter().find(|bucket| bucket.name.as_ref().unwrap().to_string() == name) {
                 Some(_bucket) => {
-                  return name.clone();
+                  result = name.clone();
                 }
                 None => {
-                  return create_bucket_rek(client, region, name, 0).await;
+                  result = create_bucket_rek(client.clone(), region, name.clone(), 0).await;
                 }
               }
             }
             None => {
-              return create_bucket_rek(client, region, name, 0).await;
+              result = create_bucket_rek(client.clone(), region, name.clone(), 0).await;
             }
           }
+          tokio::spawn(tag_bucket(client.clone(), name.clone()));
+          return result;
         }
         Err(e) => {
           let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
@@ -1812,7 +1861,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                 bucket: bucket.clone(),
                 expected_bucket_owner: None,
                 bypass_governance_retention: None,
-                delete: Delete {
+                delete: ObjectDelete {
                   objects: to_be_deleted,
                   quiet: None,
                 },
@@ -1848,7 +1897,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                 bucket: bucket.clone(),
                 expected_bucket_owner: None,
                 bypass_governance_retention: None,
-                delete: Delete {
+                delete: ObjectDelete {
                   objects: result.contents.expect("No objects listed").iter().map(|object| ObjectIdentifier {
                     key: object.clone().key.expect("No object key received"),
                     version_id: None,
