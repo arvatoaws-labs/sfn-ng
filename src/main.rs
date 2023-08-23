@@ -1,7 +1,7 @@
 use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
-use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest};
+use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration};
 use rusoto_sts::{StsClient, GetCallerIdentityRequest, Sts};
 use clap::{Arg, App, ArgMatches};
 use colored::*;
@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.26")
+    .version("0.2.27")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1367,14 +1367,35 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
   }
 }
 
-async fn tag_bucket(client: S3Client, name: String) {
+async fn bucket_settings(client: S3Client, name: String) {
+  println!("Putting public access block config");
+  match client.put_public_access_block(PutPublicAccessBlockRequest {
+    bucket: name.clone(),
+    content_md5: None,
+    expected_bucket_owner: None,
+    public_access_block_configuration: PublicAccessBlockConfiguration {
+      block_public_acls: Some(true),
+      block_public_policy: Some(true),
+      ignore_public_acls: Some(true),
+      restrict_public_buckets: Some(true)
+    }
+  }).await {
+    Ok(_) => {
+      println!("Put public access block config");
+    }
+    Err(e) => {
+      println!("Error putting public access block config: {}", e);
+    }
+  }
   let get_tags = GetBucketTaggingRequest {
     bucket: name.clone(),
     expected_bucket_owner: None,
   };
+  println!("Tagging bucket {}", name.clone());
+  let mut tag_set: Vec<BucketTag>;
   match client.get_bucket_tagging(get_tags).await {
     Ok(tags) => {
-      let mut tag_set = tags.tag_set;
+      tag_set = tags.tag_set;
       match tag_set.iter().position(|x| x.key == "BackupPlan") {
         Some(i) => {
           if tag_set[i].value == "none" {
@@ -1390,25 +1411,30 @@ async fn tag_bucket(client: S3Client, name: String) {
           });
         }
       }
-      let tag_input = PutBucketTaggingRequest {
-        bucket: name.clone(),
-        content_md5: None,
-        expected_bucket_owner: None,
-        tagging: BucketTagging {
-          tag_set
-        }
-      };
-      match client.put_bucket_tagging(tag_input).await {
-        Ok(_) => {
-          println!("Tagged bucket {}", name);
-        }
-        Err(e) => {
-          println!("Error tagging bucket {}: {}", name, e);
-        }
-      }
     }
     Err(e) => {
-      println!("Error getting tags for bucket {}: {}", name, e);
+      tag_set = vec![
+        BucketTag {
+          key: "BackupPlan".to_string(),
+          value: "none".to_string()
+        }
+      ];
+    }
+  }
+  let tag_input = PutBucketTaggingRequest {
+    bucket: name.clone(),
+    content_md5: None,
+    expected_bucket_owner: None,
+    tagging: BucketTagging {
+      tag_set
+    }
+  };
+  match client.put_bucket_tagging(tag_input).await {
+    Ok(_) => {
+      println!("Tagged bucket {}", name);
+    }
+    Err(e) => {
+      println!("Error tagging bucket {}: {}", name, e);
     }
   }
 }
@@ -1481,7 +1507,7 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
               result = create_bucket_rek(client.clone(), region, name.clone(), 0).await;
             }
           }
-          tokio::spawn(tag_bucket(client.clone(), name.clone()));
+          tokio::spawn(bucket_settings(client.clone(), name.clone()));
           return result;
         }
         Err(e) => {
