@@ -1,7 +1,7 @@
 use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
-use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration};
+use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration, PutBucketLifecycleConfigurationRequest, BucketLifecycleConfiguration, LifecycleRule, Transition, AbortIncompleteMultipartUpload, NoncurrentVersionExpiration, LifecycleExpiration, LifecycleRuleFilter};
 use rusoto_sts::{StsClient, GetCallerIdentityRequest, Sts};
 use clap::{Arg, App, ArgMatches};
 use colored::*;
@@ -509,7 +509,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: ListSt
 
 fn generate_matches() -> ArgMatches {
   return App::new("sfn-ng")
-    .version("0.2.27")
+    .version("0.2.28")
     .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
     .about("Does sparkleformation command stuff")
     .subcommand(App::new("list")
@@ -1368,6 +1368,62 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
 }
 
 async fn bucket_settings(client: S3Client, name: String) {
+  println!("Putting bucket lifecycle rule");
+  match client.put_bucket_lifecycle_configuration(PutBucketLifecycleConfigurationRequest {
+    bucket: name.clone(),
+    expected_bucket_owner: None,
+    lifecycle_configuration: Some(BucketLifecycleConfiguration {
+      rules: vec![
+        LifecycleRule {
+          abort_incomplete_multipart_upload: None,
+          expiration: Some(LifecycleExpiration {
+            date: None,
+            days: Some(32),
+            expired_object_delete_marker: None,
+          }),
+          filter: Some(LifecycleRuleFilter {
+            and: None,
+            prefix: None,
+            tag: None
+          }),
+          id: Some("Lifecycle".to_string()),
+          noncurrent_version_expiration: Some(NoncurrentVersionExpiration {
+            noncurrent_days: Some(32)
+          }),
+          noncurrent_version_transitions: None,
+          status: "Enabled".to_string(),
+          transitions: None
+        },
+        LifecycleRule {
+          abort_incomplete_multipart_upload: Some(AbortIncompleteMultipartUpload {
+            days_after_initiation: Some(3)
+          }),
+          expiration: Some(LifecycleExpiration {
+            date: None,
+            days: None,
+            expired_object_delete_marker: Some(true),
+          }),
+          filter: Some(LifecycleRuleFilter {
+            and: None,
+            prefix: None,
+            tag: None
+          }),
+          id: Some("Cleanup".to_string()),
+          noncurrent_version_expiration: None,
+          noncurrent_version_transitions: None,
+          status: "Enabled".to_string(),
+          transitions: None,
+        }
+      ]
+    })
+  }).await {
+    Ok(_) => {
+      // println!("DEBUG: Lifecycle worked");
+    }
+    Err(e) => {
+      println!("Error putting bucket lifecycle rule: {}", e);
+    }
+  };
   println!("Putting public access block config");
   match client.put_public_access_block(PutPublicAccessBlockRequest {
     bucket: name.clone(),
