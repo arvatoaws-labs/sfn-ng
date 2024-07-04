@@ -1,4 +1,4 @@
-use rusoto_core::{Region, ByteStream};
+// use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
 use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration, PutBucketLifecycleConfigurationRequest, BucketLifecycleConfiguration, LifecycleRule, Transition, AbortIncompleteMultipartUpload, NoncurrentVersionExpiration, LifecycleExpiration, LifecycleRuleFilter};
@@ -17,6 +17,10 @@ use std::path::Path;
 use async_recursion::async_recursion;
 use std::str::FromStr;
 use std::process::{Command, Stdio};
+use aws_config::meta::region::RegionProviderChain;
+use aws_config::Region;
+use aws_sdk_cloudformation::Client as CloudFormationClient;
+use aws_sdk_s3::Client as S3Client;
 use string_morph;
 use walkdir::WalkDir;
 use string_morph::Morph;
@@ -66,7 +70,7 @@ async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClie
 }
 
 #[async_recursion]
-async fn generate_completion_test_rek(describe_input: DescribeStacksInput, client: CloudFormationClient, i: u64) -> Vec<Stack> {
+async fn generate_completion_test_rek(describe_input: DescribeStacksInput, client: Client, i: u64) -> Vec<Stack> {
   return match client.describe_stacks(describe_input.clone()).await {
     Ok(result) => {
       result.stacks.expect("Something went wrong describing stack")
@@ -157,7 +161,7 @@ async fn wait_for_changeset_creation(client: CloudFormationClient, describe_inpu
 }
 
 #[async_recursion]
-async fn generate_events_output_rek(events_input: DescribeStackEventsInput, client: CloudFormationClient, i: u64) -> DescribeStackEventsOutput {
+async fn generate_events_output_rek(events_input: DescribeStackEventsInput, client: Client, i: u64) -> DescribeStackEventsOutput {
   return match client.describe_stack_events(events_input.clone()).await {
     Ok(result) => result,
     Err(e) => {
@@ -174,7 +178,7 @@ async fn generate_events_output_rek(events_input: DescribeStackEventsInput, clie
 }
 
 #[async_recursion]
-async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClient, region: Region, start_time: DateTime<Local>) {
+async fn poll_stack_status(stack_id: Option<String>, client: Client, start_time: DateTime<Local>) {
   println!("DEBUG start poll");
   let events_input = DescribeStackEventsInput {
     next_token: None,
@@ -223,9 +227,9 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
       stack_name: stack_id.clone().expect("Something went wrong deleting failed stack")
     };
     if always_yes_or_ask(false, "destroy stack") {
-      cleanup_resources(stack_id.clone().expect("Something went wrong deleting failed stack"), region.clone()).await;
+      cleanup_resources(stack_id.clone().expect("Something went wrong deleting failed stack"), client.clone()).await;
       delete_stack_rek(client.clone(), delete_stack_input, 0).await;
-      poll_stack_status(Some(lookup_stackid_to_name(stack_id.expect("Something went wrong deleting failed stack"), client.clone()).await), client.clone(), region.clone(), start_time).await;
+      poll_stack_status(Some(lookup_stackid_to_name(stack_id.expect("Something went wrong deleting failed stack"), client.clone()).await), client.clone(), start_time).await;
     } else {
       println!("Canceling destroy stack");
     }
@@ -272,7 +276,7 @@ struct StackParameterFile {
   apply_mappings: Option<Vec<MappingValue>>,
   tags: Option<HashMap<String, String>>,
   template: Option<String>,
-  region: Region
+  region: Option<Region>
 }
 
 fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
@@ -323,10 +327,10 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
     None => { None }
   };
 
-  let mut region= Region::default();
-  let parsed_region = content.get("region");
+  let mut region = None;
+  let parsed_region = content.get("region"); // TODO
   if parsed_region.is_some() {
-    region = map_region(&*value_to_string(parsed_region.unwrap()).expect("Region parsing failed"));
+    region = Some(Region::new(parsed_region.unwrap().as_str().expect("Region parsing failed")));
   }
 
   let tags_raw = content.get("tags");
@@ -1661,13 +1665,18 @@ async fn main() {
       let start_time = chrono::offset::Local::now() - chrono::Duration::minutes(attach_opts.value_of("time-backwards").unwrap_or("5").parse::<i64>().expect("Time backwards is not an integer"));
       let stack_name = attach_opts.value_of("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
-      let mut region = Region::default();
+      let mut region_provider = RegionProviderChain::default_provider().or_else(Region::new("eu-central-1"));
       if stack_parameter_file.clone().is_some() {
-        region = stack_parameter_file.clone().unwrap().region;
+        let region = stack_parameter_file.clone().unwrap().region;
+        if region.is_some() {
+          region_provider = RegionProviderChain::first_try(region.unwrap());
+        }
       }
-      let client = CloudFormationClient::new(region.clone());
+      region_provider.region().await.expect("No region found");
+      let config = aws_config::from_env().region(region_provider).load().await;
+      let client = aws_sdk_cloudformation::Client::new(&config);
 
-      poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client, region, start_time).await;
+      poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client, start_time).await;
     }
     Some("convert-parameter-file") => {
       let convert_opts = matches.subcommand_matches("convert-parameter-file").unwrap();
@@ -1685,7 +1694,7 @@ async fn main() {
 
       let stack_input = prepare_stack_input(update_opts, start_time.clone(), true).await;
 
-      let create_changeset_input = CreateChangeSetInput {
+      let create_changeset_input = CreateChangeSetInput { // TODO
         capabilities: Some(["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"].iter().map(|i| String::from(*i)).collect::<Vec<String>>()),
         change_set_name: format!("sfn-ng-{}", start_time.timestamp()),
         change_set_type: Some("UPDATE".to_string()),
@@ -1779,7 +1788,7 @@ async fn main() {
         None => true
       };
       if always_yes_or_ask(always_yes, "destroy stack") {
-        cleanup_resources(stack_name.clone(), region.clone()).await;
+        cleanup_resources(stack_name.clone(), client.clone()).await;
         delete_stack_rek(client.clone(), delete_stack_input, 0).await;
         if poll {
           poll_stack_status(Some(lookup_stackid_to_name(stack_name, client.clone()).await), client.clone(), region.clone(), start_time).await;
@@ -1889,8 +1898,7 @@ async fn list_objects_rek(s3: S3Client, list_objects_input: ListObjectsV2Request
   }
 }
 
-async fn cleanup_resources(stack_name: String, region: Region) {
-  let client = CloudFormationClient::new(region.clone());
+async fn cleanup_resources(stack_name: String, client: Client) {
   //TODO Cleanup ECR
   //     Cleanup manual edited AWS::IAM::Group
   //                           AWS::IAM::Role

@@ -5,6 +5,7 @@ use std::thread::sleep;
 use serde_json::{Value};
 use chrono::*;
 use async_recursion::async_recursion;
+use aws_sdk_cloudformation::Client;
 
 pub fn pretty_panic(message: String) {
     println!("{}", message.red().bold());
@@ -29,7 +30,7 @@ pub fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTi
 }
 
 
-pub async fn lookup_stackid_to_name(stack_name: String, client: CloudFormationClient) -> String {
+pub async fn lookup_stackid_to_name(stack_name: String, client: Client) -> String {
     return lookup_stackid_to_name_rek(stack_name, client, 0).await;
 }
 
