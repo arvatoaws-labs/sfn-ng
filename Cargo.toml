@@ -23,7 +23,7 @@ rusoto_core = "=0.46.0"
 rusoto_cloudformation = "=0.46.0"
 rusoto_ec2 = "=0.46.0"
 rusoto_s3 = "=0.46.0"
-rusoto_sts = "=0.46.0"
+rusoto_sts = "=0.48.0"
 tokio = { version = ">=0.3.0", features = ["full"] }
 clap = "=3.0.0-beta.2"
 colored = ">=1.9.3"
