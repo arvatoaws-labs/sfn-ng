@@ -1,7 +1,7 @@
 use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
-use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration, PutBucketLifecycleConfigurationRequest, BucketLifecycleConfiguration, LifecycleRule, Transition, AbortIncompleteMultipartUpload, NoncurrentVersionExpiration, LifecycleExpiration, LifecycleRuleFilter};
+use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration, PutBucketLifecycleConfigurationRequest, BucketLifecycleConfiguration, LifecycleRule, AbortIncompleteMultipartUpload, NoncurrentVersionExpiration, LifecycleExpiration, LifecycleRuleFilter};
 use rusoto_sts::{StsClient, GetCallerIdentityRequest, AssumeRoleRequest, Credentials, Sts};
 use clap::{Arg, App, ArgMatches};
 use colored::*;
@@ -1829,7 +1829,7 @@ fn always_yes_or_ask(always_yes: bool, msg: &str) -> bool {
   let mut input = String::new();
 
   if !always_yes {
-    print!("Do you want to execute {}?: ", msg.clone());
+    print!("Do you want to execute {}?: ", msg);
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect(&format!("Canceling {}", msg)[..]);
     input.pop();
