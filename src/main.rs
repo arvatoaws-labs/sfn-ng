@@ -29,7 +29,7 @@ pub use utils::*;
 async fn assume_role_sso() -> Option<Credentials> {
   // TODO check env?
   match env::var("AWS_PROFILE") {
-    Ok(profile) => {
+    Ok(_profile) => {
       let sts = StsClient::new(Region::default());
       let input = AssumeRoleRequest {
         duration_seconds: None,
@@ -52,7 +52,7 @@ async fn assume_role_sso() -> Option<Credentials> {
         }
       }
     }
-    Err(e) => {
+    Err(_e) => {
       return None;
     }
   }
@@ -1501,7 +1501,7 @@ async fn bucket_settings(client: S3Client, name: String) {
         }
       }
     }
-    Err(e) => {
+    Err(_e) => {
       tag_set = vec![
         BucketTag {
           key: "BackupPlan".to_string(),
