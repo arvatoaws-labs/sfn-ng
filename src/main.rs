@@ -2,7 +2,7 @@ use rusoto_core::{Region, ByteStream};
 use rusoto_ec2::{Ec2Client, Ec2, DescribeRegionsRequest};
 use rusoto_cloudformation::*;
 use rusoto_s3::{S3Client, PutObjectRequest, PutBucketTaggingRequest, CreateBucketRequest, CreateBucketConfiguration, GetBucketVersioningRequest, Tagging as BucketTagging, Tag as BucketTag, ListObjectVersionsRequest, ListObjectVersionsOutput, DeleteObjectsRequest, ListObjectsV2Request, ListObjectsV2Output, ObjectIdentifier, Delete as ObjectDelete, S3, GetBucketTaggingRequest, PutPublicAccessBlockRequest, PublicAccessBlockConfiguration, PutBucketLifecycleConfigurationRequest, BucketLifecycleConfiguration, LifecycleRule, Transition, AbortIncompleteMultipartUpload, NoncurrentVersionExpiration, LifecycleExpiration, LifecycleRuleFilter};
-use rusoto_sts::{StsClient, GetCallerIdentityRequest, Sts};
+use rusoto_sts::{StsClient, GetCallerIdentityRequest, AssumeRoleRequest, Credentials, Sts};
 use clap::{Arg, App, ArgMatches};
 use colored::*;
 use itertools::Itertools;
@@ -21,9 +21,42 @@ use string_morph;
 use walkdir::WalkDir;
 use string_morph::Morph;
 use json_structural_diff::JsonDiff;
+use std::env;
 
 pub mod utils;
 pub use utils::*;
+
+async fn assume_role_sso() -> Option<Credentials> {
+  // TODO check env?
+  match env::var("AWS_PROFILE") {
+    Ok(profile) => {
+      let sts = StsClient::new(Region::default());
+      let input = AssumeRoleRequest {
+        duration_seconds: None,
+        external_id: None,
+        policy: None,
+        policy_arns: None,
+        role_arn: "arn:aws:iam::123456789012:role/role-name".to_string(),
+        role_session_name: "session-name".to_string(),
+        serial_number: None,
+        tags: None,
+        token_code: None,
+        transitive_tag_keys: None,
+      };
+      match sts.assume_role(input).await {
+        Ok(output) => {
+          return Some(output.credentials.expect("No credentials returned from assume role"));
+        }
+        Err(e) => {
+          panic!("Error assuming role: {}", e);
+        }
+      }
+    }
+    Err(e) => {
+      return None;
+    }
+  }
+}
 
 async fn lookup_stack_outputs(stack_name: String, client: CloudFormationClient) -> Vec<Parameter> {
   return lookup_stack_outputs_rek(stack_name, client, 0).await;
@@ -1081,7 +1114,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     sse_customer_key_md5: None,
     ssekms_encryption_context: None,
     ssekms_key_id: None,
-    server_side_encryption: None,
+    server_side_encryption: Some("AES256".to_string()),
     storage_class: None,
     tagging: None,
     website_redirect_location: None
