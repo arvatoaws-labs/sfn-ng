@@ -1,29 +1,29 @@
 use aws_sdk_cloudformation::Client as CloudFormationClient;
 use aws_sdk_cloudformation::types::{
-  ChangeSetType, OnFailure, Parameter, Stack, StackEvent, StackResource, StackStatus, Tag,
+    ChangeSetType, OnFailure, Parameter, Stack, StackEvent, StackResource, StackStatus, Tag,
 };
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::types::{
-  AbortIncompleteMultipartUpload, BucketLifecycleConfiguration, CreateBucketConfiguration,
-  ExpirationStatus, LifecycleExpiration, LifecycleRule, LifecycleRuleFilter,
-  NoncurrentVersionExpiration, ObjectIdentifier, PublicAccessBlockConfiguration, Tag as BucketTag,
+    AbortIncompleteMultipartUpload, BucketLifecycleConfiguration, CreateBucketConfiguration,
+    ExpirationStatus, LifecycleExpiration, LifecycleRule, LifecycleRuleFilter,
+    NoncurrentVersionExpiration, ObjectIdentifier, PublicAccessBlockConfiguration, Tag as BucketTag,
 };
 use aws_sdk_sts::Client as StsClient;
 use aws_types::region::Region;
-use clap::{Arg, App, ArgMatches};
+use clap::{Arg, ArgAction, Command, ArgMatches};
 use colored::*;
 use itertools::Itertools;
 use std::fs;
 use std::time::Duration;
 use std::thread::sleep;
 use std::io::{Write, stdin, stdout};
-use serde_json::{Value};
-use chrono::*;
+use serde_json::Value;
+use chrono::{DateTime, Local, NaiveDateTime, Duration as ChronoDuration};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use async_recursion::async_recursion;
-use std::process::{Command, Stdio};
+use std::process::{Command as StdCommand, Stdio};
 use string_morph;
 use walkdir::WalkDir;
 use string_morph::Morph;
@@ -244,7 +244,7 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     let completion_test = generate_completion_test_rek(stack_id.clone(), client.clone(), 0).await;
     let events = generate_events_output_rek(stack_id.clone(), client.clone(), 0).await;
     pretty_print_stack_events(events.clone(), last_printed);
-    last_printed = DateTime::from(Utc.datetime_from_str(events.iter().max_by_key(|event| event.timestamp().clone()).unwrap().timestamp().unwrap().to_string().as_str(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap());
+    last_printed = NaiveDateTime::parse_from_str(events.iter().max_by_key(|event| event.timestamp().clone()).unwrap().timestamp().unwrap().to_string().as_str(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
     if [
       "CREATE_COMPLETE",
       "UPDATE_COMPLETE",
@@ -472,12 +472,12 @@ async fn list_stacks_prep(ec2: Ec2Client, list_opts: &ArgMatches, i: u64) {
 }
 
 async fn list_stacks_main(client: CloudFormationClient, region: Region, list_opts: &ArgMatches) {
-  // println!();
-  println!("Listing stacks for region {}", region_name(&region).bright_white().bold());
-  let mut list_stacks_input = client.list_stacks();
-  if list_opts.is_present("status") {
-    list_stacks_input = list_stacks_input.stack_status_filter(StackStatus::from(list_opts.value_of("status").unwrap()));
-  } else if !list_opts.is_present("deleted") {
+    // println!();
+    println!("Listing stacks for region {}", region_name(&region).bright_white().bold());
+    let mut list_stacks_input = client.list_stacks();
+    if list_opts.contains_id("status") {
+        list_stacks_input = list_stacks_input.stack_status_filter(StackStatus::from(list_opts.get_one::<String>("status").unwrap().as_str()));
+    } else if !list_opts.contains_id("deleted") {
     let list_of_types = [
       "CREATE_IN_PROGRESS",
       "CREATE_FAILED",
@@ -510,10 +510,10 @@ async fn list_stacks_main(client: CloudFormationClient, region: Region, list_opt
 }
 
 async fn list_stacks(matches: ArgMatches) {
-  let region = default_region();
+    let region = default_region();
 
-  let list_opts = matches.subcommand_matches("list").unwrap();
-  if list_opts.is_present("all-regions") {
+    let list_opts = matches.subcommand_matches("list").unwrap();
+    if list_opts.contains_id("all-regions") {
     let ec2 = build_ec2_client(region.clone()).await;
     list_stacks_prep(ec2, list_opts, 0).await
   } else {
@@ -531,7 +531,7 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: aws_sd
         println!("No stacks");
       } else {
         // println!("{}", "Stacks:".bold());
-        for (status, grouped_stack_list) in stack_list.iter().map(|stack| (stack.stack_status().map(|s| s.as_str().to_string()).unwrap_or("UNKNOWN".to_string()), stack.clone())).into_group_map().iter().sorted_by_key(|(status, _)| status.clone()) {
+        for (status, grouped_stack_list) in stack_list.iter().map(|stack| (stack.stack_status().map(|s| s.as_str().to_string()).unwrap_or("UNKNOWN".to_string()), stack.clone())).into_group_map().iter().sorted_by_key(|(status, _)| *status) {
           println!("{}", match_status_color(status, status).bold());
           for stack in grouped_stack_list {
             println!("{:120.120} {}", match_status_color(status, stack.stack_name().unwrap_or("-")), match_status_color(status, status));
@@ -554,214 +554,243 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: aws_sd
 }
 
 fn generate_matches() -> ArgMatches {
-  return App::new("sfn-ng")
-    .version("0.2.29")
-    .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
-    .about("Does sparkleformation command stuff")
-    .subcommand(App::new("list")
-      .about("Lists stacks")
-      .arg(Arg::new("status")
-        .short('s')
-        .long("status")
-        .takes_value(true)
-        .about("Match stacks with given status")
-      )
-      .arg(Arg::new("deleted")
-        .short('d')
-        .long("deleted")
-        .about("Include deleted stacks")
-      )
-      .arg(Arg::new("all-regions")
-        .short('a')
-        .long("all-regions")
-        .about("List stacks for each regions")
-      )
-    )
-    .subcommand(App::new("attach-event-stream")
-        .about("Attaches to a running CloudFormation operations event stream")
-        .arg(Arg::new("STACKNAME")
-          .about("Name of the stack to follow")
-          .required(true)
-          .index(1)
+    return Command::new("sfn-ng")
+        .version("0.2.30")
+        .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
+        .about("Does sparkleformation command stuff")
+        .subcommand(
+            Command::new("list")
+                .about("Lists stacks")
+                .arg(
+                    Arg::new("status")
+                        .short('s')
+                        .long("status")
+                        .action(ArgAction::Set)
+                        .help("Match stacks with given status")
+                )
+                .arg(
+                    Arg::new("deleted")
+                        .short('d')
+                        .long("deleted")
+                        .action(ArgAction::SetTrue)
+                        .help("Include deleted stacks")
+                )
+                .arg(
+                    Arg::new("all-regions")
+                        .short('a')
+                        .long("all-regions")
+                        .action(ArgAction::SetTrue)
+                        .help("List stacks for each regions")
+                )
         )
-        .arg(Arg::new("time-backwards")
-            .short('t')
-            .long("time-backwards")
-            .takes_value(true)
-            .about("How long backwards (in minutes) to start printing events from")
+        .subcommand(
+            Command::new("attach-event-stream")
+                .about("Attaches to a running CloudFormation operations event stream")
+                .arg(
+                    Arg::new("STACKNAME")
+                        .help("Name of the stack to follow")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("time-backwards")
+                        .short('t')
+                        .long("time-backwards")
+                        .action(ArgAction::Set)
+                        .help("How long backwards (in minutes) to start printing events from")
+                )
         )
-    )
-    .subcommand(App::new("destroy")
-      .about("Destroys a stack")
-      .arg(Arg::new("STACKNAME")
-        .about("Sets the StackName")
-        .required(true)
-        .index(1)
-      )
-      .arg(Arg::new("yes")
-        .short('y')
-        .long("yes")
-        .takes_value(false)
-        .about("Automatically accept any requests for confirmation")
-      )
-      .arg(Arg::new("poll")
-        .short('p')
-        .long("poll")
-        .takes_value(true)
-        .about("Poll stack events on modification actions (default: true)")
-      )
-    )
-    .subcommand(App::new("convert-parameter-file")
-      .about("Converts a ruby parameter file to json")
-      .arg(Arg::new("file")
-        .short('f')
-        .long("file")
-        .takes_value(true)
-        .required(true)
-        .about("Which stack parameter file to use")
-      )
-    )
-    .subcommand(App::new("create")
-      .about("Create a new stack")
-      .arg(Arg::new("STACKNAME")
-        .about("Sets the StackName")
-        .required(true)
-        .index(1)
-      )
-      .arg(Arg::new("apply-mapping")
-        .long("apply-mapping")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Customize apply stack mapping (OutputName=ParameterName[,OutputName=ParameterName,...])")
-      )
-      .arg(Arg::new("apply-stack")
-        .short('A')
-        .long("apply-stack")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Apply outputs from stack to input parameters")
-      )
-      .arg(Arg::new("defaults")
-        .short('d')
-        .long("defaults")
-        .takes_value(false)
-        .about("Automatically accept default values")
-      )
-      .arg(Arg::new("file")
-        .short('f')
-        .long("file")
-        .value_name("FILE")
-        .takes_value(true)
-        .about("Path to template file")
-      )
-      .arg(Arg::new("parameters")
-        .short('m')
-        .long("parameters")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Pass template parameters directly (Key=Value[,Key=Value,...])")
-      )
-      .arg(Arg::new("poll")
-        .short('p')
-        .long("poll")
-        .takes_value(true)
-        .about("Poll stack events on modification actions (default: true)")
-      )
-      .arg(Arg::new("tags")
-        .short('t')
-        .long("tags")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Tags of the resulting Stack (Key=Value[,Key=Value,...])")
-      )
-      .arg(Arg::new("yes")
-        .short('y')
-        .long("yes")
-        .takes_value(false)
-        .about("Automatically accept any requests for confirmation")
-      )
-    )
-    .subcommand(App::new("update")
-      .about("Updates a stack")
-      .arg(Arg::new("STACKNAME")
-        .about("Sets the StackName")
-        .required(true)
-        .index(1)
-      )
-      .arg(Arg::new("apply-mapping")
-        .long("apply-mapping")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Customize apply stack mapping (OutputName=ParameterName[,OutputName=ParameterName,...])")
-      )
-      .arg(Arg::new("apply-stack")
-        .short('A')
-        .long("apply-stack")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Apply outputs from stack to input parameters")
-      )
-      .arg(Arg::new("defaults")
-        .short('d')
-        .long("defaults")
-        .takes_value(false)
-        .about("Automatically accept default values")
-      )
-      .arg(Arg::new("changed-params")
-        .short('D')
-        .long("changed-params")
-        .takes_value(false)
-        .about("Only show the parameters that differ from the currently deployed stack")
-      )
-      .arg(Arg::new("diff")
-        .short('j')
-        .long("diff")
-        .takes_value(true)
-        .about("Display JSON diff of templates (default: true)")
-      )
-      .arg(Arg::new("file")
-        .short('f')
-        .long("file")
-        .value_name("FILE")
-        .takes_value(true)
-        .about("Path to template file")
-      )
-      .arg(Arg::new("parameters")
-        .short('m')
-        .long("parameters")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Pass template parameters directly (Key=Value[,Key=Value,...])")
-      )
-      .arg(Arg::new("poll")
-        .short('p')
-        .long("poll")
-        .takes_value(true)
-        .about("Poll stack events on modification actions (default: true)")
-      )
-      .arg(Arg::new("tags")
-        .short('t')
-        .long("tags")
-        .takes_value(true)
-        .multiple(true)
-        .use_delimiter(true)
-        .about("Tags of the resulting Stack (Key=Value[,Key=Value,...])")
-      )
-      .arg(Arg::new("yes")
-        .short('y')
-        .long("yes")
-        .takes_value(false)
-        .about("Automatically accept any requests for confirmation")
-      )
-    )
-    .get_matches();
+        .subcommand(
+            Command::new("destroy")
+                .about("Destroys a stack")
+                .arg(
+                    Arg::new("STACKNAME")
+                        .help("Sets the StackName")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("yes")
+                        .short('y')
+                        .long("yes")
+                        .action(ArgAction::SetTrue)
+                        .help("Automatically accept any requests for confirmation")
+                )
+                .arg(
+                    Arg::new("poll")
+                        .short('p')
+                        .long("poll")
+                        .action(ArgAction::Set)
+                        .help("Poll stack events on modification actions (default: true)")
+                )
+        )
+        .subcommand(
+            Command::new("convert-parameter-file")
+                .about("Converts a ruby parameter file to json")
+                .arg(
+                    Arg::new("file")
+                        .short('f')
+                        .long("file")
+                        .action(ArgAction::Set)
+                        .required(true)
+                        .help("Which stack parameter file to use")
+                )
+        )
+        .subcommand(
+            Command::new("create")
+                .about("Create a new stack")
+                .arg(
+                    Arg::new("STACKNAME")
+                        .help("Sets the StackName")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("apply-mapping")
+                        .long("apply-mapping")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Customize apply stack mapping (OutputName=ParameterName[,OutputName=ParameterName,...])")
+                )
+                .arg(
+                    Arg::new("apply-stack")
+                        .short('A')
+                        .long("apply-stack")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Apply outputs from stack to input parameters")
+                )
+                .arg(
+                    Arg::new("defaults")
+                        .short('d')
+                        .long("defaults")
+                        .action(ArgAction::SetTrue)
+                        .help("Automatically accept default values")
+                )
+                .arg(
+                    Arg::new("file")
+                        .short('f')
+                        .long("file")
+                        .value_name("FILE")
+                        .action(ArgAction::Set)
+                        .help("Path to template file")
+                )
+                .arg(
+                    Arg::new("parameters")
+                        .short('m')
+                        .long("parameters")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Pass template parameters directly (Key=Value[,Key=Value,...])")
+                )
+                .arg(
+                    Arg::new("poll")
+                        .short('p')
+                        .long("poll")
+                        .action(ArgAction::Set)
+                        .help("Poll stack events on modification actions (default: true)")
+                )
+                .arg(
+                    Arg::new("tags")
+                        .short('t')
+                        .long("tags")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Tags of the resulting Stack (Key=Value[,Key=Value,...])")
+                )
+                .arg(
+                    Arg::new("yes")
+                        .short('y')
+                        .long("yes")
+                        .action(ArgAction::SetTrue)
+                        .help("Automatically accept any requests for confirmation")
+                )
+        )
+        .subcommand(
+            Command::new("update")
+                .about("Updates a stack")
+                .arg(
+                    Arg::new("STACKNAME")
+                        .help("Sets the StackName")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("apply-mapping")
+                        .long("apply-mapping")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Customize apply stack mapping (OutputName=ParameterName[,OutputName=ParameterName,...])")
+                )
+                .arg(
+                    Arg::new("apply-stack")
+                        .short('A')
+                        .long("apply-stack")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Apply outputs from stack to input parameters")
+                )
+                .arg(
+                    Arg::new("defaults")
+                        .short('d')
+                        .long("defaults")
+                        .action(ArgAction::SetTrue)
+                        .help("Automatically accept default values")
+                )
+                .arg(
+                    Arg::new("changed-params")
+                        .short('D')
+                        .long("changed-params")
+                        .action(ArgAction::SetTrue)
+                        .help("Only show the parameters that differ from the currently deployed stack")
+                )
+                .arg(
+                    Arg::new("diff")
+                        .short('j')
+                        .long("diff")
+                        .action(ArgAction::Set)
+                        .help("Display JSON diff of templates (default: true)")
+                )
+                .arg(
+                    Arg::new("file")
+                        .short('f')
+                        .long("file")
+                        .value_name("FILE")
+                        .action(ArgAction::Set)
+                        .help("Path to template file")
+                )
+                .arg(
+                    Arg::new("parameters")
+                        .short('m')
+                        .long("parameters")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Pass template parameters directly (Key=Value[,Key=Value,...])")
+                )
+                .arg(
+                    Arg::new("poll")
+                        .short('p')
+                        .long("poll")
+                        .action(ArgAction::Set)
+                        .help("Poll stack events on modification actions (default: true)")
+                )
+                .arg(
+                    Arg::new("tags")
+                        .short('t')
+                        .long("tags")
+                        .action(ArgAction::Append)
+                        .value_delimiter(',')
+                        .help("Tags of the resulting Stack (Key=Value[,Key=Value,...])")
+                )
+                .arg(
+                    Arg::new("yes")
+                        .short('y')
+                        .long("yes")
+                        .action(ArgAction::SetTrue)
+                        .help("Automatically accept any requests for confirmation")
+                )
+        )
+        .get_matches()
 }
 
 #[async_recursion]
@@ -812,7 +841,6 @@ struct StackInput {
   region: Region,
   used_parameters: Vec<Parameter>,
   tags: Option<Vec<Tag>>,
-  template_body: Option<String>,
   client: CloudFormationClient,
   bucket: String,
   path: String
@@ -882,22 +910,22 @@ struct ApplyStackParameter {
 
 // if upgrade check for previous values of params & tags as well.
 async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_upgrade: bool) -> StackInput {
-  let stack_name = opts.value_of("STACKNAME").expect("No Stack named").to_string();
-  println!("Value for StackName: {}", stack_name);
+    let stack_name = opts.get_one::<String>("STACKNAME").expect("No Stack named").to_string();
+    println!("Value for StackName: {}", stack_name);
 
-  let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
+    let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
 
-  let mut region = default_region();
-  if stack_parameter_file.clone().is_some() {
-    region = stack_parameter_file.clone().unwrap().region;
-  }
-  let client = build_cfn_client(region.clone()).await;
+    let mut region = default_region();
+    if stack_parameter_file.clone().is_some() {
+        region = stack_parameter_file.clone().unwrap().region;
+    }
+    let client = build_cfn_client(region.clone()).await;
 
-  println!("Region: {}", region_name(&region));
+    println!("Region: {}", region_name(&region));
 
-  let explicit_parameters: Vec<Parameter> = match opts.values_of("parameters") {
-    Some(parameters_list) => parameters_list.collect::<Vec<_>>().iter().map(|input| {
-      let pair = input.split("=").collect::<Vec<&str>>();
+    let explicit_parameters: Vec<Parameter> = match opts.get_many::<String>("parameters") {
+        Some(parameters_list) => parameters_list.map(|input| {
+            let pair = input.split("=").collect::<Vec<_>>();
       return make_parameter(
         Some(pair[0].to_string()),
         Some(pair[1].to_string()),
@@ -928,8 +956,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     ]
    */
 
-  let mut mappings: Vec<MappingValue> = match opts.values_of("apply-mapping") {
-    Some(list) => list.collect::<Vec<_>>().iter().map(|input| {
+  let mut mappings: Vec<MappingValue> = match opts.get_many::<String>("apply-mapping") {
+    Some(list) => list.map(|input| {
       let pair = input.split("=").collect::<Vec<&str>>();
       // TODO: allow for stack & region let enc_output = pair[0].to_string().clone().split("__");
       return MappingValue {
@@ -967,9 +995,9 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     }
   }
 
-  match opts.values_of("tags") {
+  match opts.get_many::<String>("tags") {
     Some(mytags) => {
-      for input in mytags.collect::<Vec<_>>().iter() {
+      for input in mytags {
         let pair = input.split("=").collect::<Vec<&str>>();
         let tag = make_tag(pair[0].to_string(), pair[1].to_string());
         let pos = tags_vec.iter().position(|ex_tag| ex_tag.key() == tag.key());
@@ -1008,7 +1036,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     None => {}
   }
   let tags = Some(tags_vec);
-  let mut template_file = opts.value_of("file");
+  let mut template_file = opts.get_one::<String>("file").map(|s| s.as_str());
   if stack_parameter_file.clone().is_some() {
     if stack_parameter_file.clone().unwrap().template.is_some() {
       template_file = Some(string_to_static_str(stack_parameter_file.clone().unwrap().template.unwrap()));
@@ -1029,8 +1057,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
     let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
 
-    let diff = match opts.value_of("diff") {
-      Some(diff_value) => match diff_value {
+    let diff = match opts.get_one::<String>("diff") {
+      Some(diff_value) => match diff_value.as_str() {
         "true" => true,
         _ => false
       },
@@ -1090,10 +1118,10 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       stacks.append(&mut stack_parameter_file.apply_stacks.unwrap().iter().map(|string| string_to_static_str(string.to_string())).collect());
     }
   }
-  match opts.values_of("apply-stack") {
+  match opts.get_many::<String>("apply-stack") {
     Some(applystack) => {
-      let mut cloneapply = applystack.clone().collect::<Vec<_>>();
-      stacks.append(&mut cloneapply);
+      let cloneapply: Vec<&str> = applystack.map(|s| s.as_str()).collect();
+      stacks.extend(cloneapply);
     },
     None => {}
   };
@@ -1193,7 +1221,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
 
   let mut dirty_flag_parameter_header = false;
   let used_parameters = merged_parameters.iter().map(|param| {
-    if opts.is_present("defaults") {
+    if opts.contains_id("defaults") {
       if param.parameter_value().is_some() {
         return make_parameter(
           param.parameter_key().map(|k| k.to_string()),
@@ -1208,7 +1236,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       let old = old_params_map.get(param.parameter_key().unwrap()).unwrap_or(&new_word);
       let new = param.parameter_value().unwrap_or("").italic();
       let not_changed = new.clone().normal().clear().eq(&old.clone().normal().clear());
-      if opts.is_present("changed-params") && not_changed {
+      if opts.contains_id("changed-params") && not_changed {
         return make_parameter(
           param.parameter_key().map(|k| k.to_string()),
           param.parameter_value().map(|v| v.to_string()),
@@ -1260,7 +1288,6 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     region,
     used_parameters,
     tags,
-    template_body,
     client,
     bucket,
     path
@@ -1443,7 +1470,7 @@ async fn bucket_settings(client: S3Client, name: String) {
         }
       }
     }
-    Err(e) => {
+    Err(_) => {
       tag_set = vec![
         BucketTag::builder()
           .key("BackupPlan".to_string())
@@ -1548,7 +1575,7 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
 }
 
 fn execute_ruby(input: String) -> String {
-  let mut child = Command::new("ruby")
+  let mut child = StdCommand::new("ruby")
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .spawn()
@@ -1614,8 +1641,8 @@ async fn main() {
   match matches.subcommand_name() {
     Some("attach-event-stream") => {
       let attach_opts = matches.subcommand_matches("attach-event-stream").unwrap();
-      let start_time = chrono::offset::Local::now() - chrono::Duration::minutes(attach_opts.value_of("time-backwards").unwrap_or("5").parse::<i64>().expect("Time backwards is not an integer"));
-      let stack_name = attach_opts.value_of("STACKNAME").expect("No Stack named").to_string();
+      let start_time = Local::now() - ChronoDuration::minutes(attach_opts.get_one::<String>("time-backwards").map(|v| v.as_str()).unwrap_or("5").parse::<i64>().expect("Time backwards is not an integer"));
+      let stack_name = attach_opts.get_one::<String>("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
       let mut region = default_region();
       if stack_parameter_file.clone().is_some() {
@@ -1627,17 +1654,17 @@ async fn main() {
     }
     Some("convert-parameter-file") => {
       let convert_opts = matches.subcommand_matches("convert-parameter-file").unwrap();
-      let rb_filename = convert_opts.value_of("file").expect("No file provided").to_string();
+      let rb_filename = convert_opts.get_one::<String>("file").expect("No file provided").to_string();
       let json_string = ruby_stack_parameters(rb_filename);
       println!("{}", json_string);
     }
     Some("list") => {
-      list_stacks(matches.clone()).await;
+      list_stacks(matches).await;
     }
     Some("update") => {
       let update_opts = matches.subcommand_matches("update").unwrap();
 
-      let start_time = chrono::offset::Local::now();
+      let start_time = Local::now();
 
       let stack_input = prepare_stack_input(update_opts, start_time.clone(), true).await;
 
@@ -1656,9 +1683,9 @@ async fn main() {
         .set_tags(stack_input.tags)
         .template_url(format!("https://{}.s3.{}.amazonaws.com/{}", stack_input.bucket, region_name(&stack_input.region), stack_input.path));
 
-      let always_yes = update_opts.is_present("yes");
-      let poll = match update_opts.value_of("poll") {
-        Some(poll_value) => match poll_value {
+      let always_yes = update_opts.get_flag("yes");
+      let poll = match update_opts.get_one::<String>("poll") {
+        Some(poll_value) => match poll_value.as_str() {
           "true" => true,
           _ => false
         },
@@ -1672,7 +1699,7 @@ async fn main() {
     Some("create") => {
       let create_opts = matches.subcommand_matches("create").unwrap();
 
-      let start_time = chrono::offset::Local::now();
+      let start_time = Local::now();
       let stack_input = prepare_stack_input(create_opts, start_time.clone(), false).await;
 
       let create_stack_input = stack_input.client.create_stack()
@@ -1683,10 +1710,10 @@ async fn main() {
         .stack_name(stack_input.stack_name)
         .set_tags(stack_input.tags)
         .template_url(format!("https://{}.s3.{}.amazonaws.com/{}", stack_input.bucket, region_name(&stack_input.region), stack_input.path));
-      let start_time = chrono::offset::Local::now();
+      let start_time = Local::now();
 
-      let poll = match create_opts.value_of("poll") {
-        Some(poll_value) => match poll_value {
+      let poll = match create_opts.get_one::<String>("poll") {
+        Some(poll_value) => match poll_value.as_str() {
           "true" => true,
           _ => false
         },
@@ -1696,7 +1723,7 @@ async fn main() {
     }
     Some("destroy") => {
       let destroy_opts = matches.subcommand_matches("destroy").unwrap();
-      let stack_name = destroy_opts.value_of("STACKNAME").expect("No Stack named").to_string();
+      let stack_name = destroy_opts.get_one::<String>("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
       let mut region = default_region();
       if stack_parameter_file.clone().is_some() {
@@ -1704,10 +1731,10 @@ async fn main() {
       }
       let client = build_cfn_client(region.clone()).await;
       let delete_stack_input = client.delete_stack().stack_name(stack_name.clone());
-      let start_time = chrono::offset::Local::now();
-      let always_yes = destroy_opts.is_present("yes");
-      let poll = match destroy_opts.value_of("poll") {
-        Some(poll_value) => match poll_value {
+      let start_time = Local::now();
+      let always_yes = destroy_opts.get_flag("yes");
+      let poll = match destroy_opts.get_one::<String>("poll") {
+        Some(poll_value) => match poll_value.as_str() {
           "true" => true,
           _ => false
         },
@@ -1731,7 +1758,7 @@ fn always_yes_or_ask(always_yes: bool, msg: &str) -> bool {
   let mut input = String::new();
 
   if !always_yes {
-    print!("Do you want to execute {}?: ", msg.clone());
+    print!("Do you want to execute {}?: ", msg);
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect(&format!("Canceling {}", msg)[..]);
     input.pop();

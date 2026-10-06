@@ -17,7 +17,7 @@ pub fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTi
     for i in 0..events.len() {
 
         let line = &events[i];
-        let event_time = Utc.datetime_from_str(&line.timestamp().unwrap().to_string(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+        let event_time = NaiveDateTime::parse_from_str(&line.timestamp().unwrap().to_string(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
         if start_time.lt(&event_time) {
             println!("{:25.25} {:70.70} {:50.50} {:}",
                      match_status_color(line.resource_status().unwrap().as_str(), line.timestamp().unwrap().to_string().as_str()),
