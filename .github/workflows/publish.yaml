@@ -11,16 +11,16 @@ jobs:
     runs-on: arvato
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.6
-      - uses: actions-rs/toolchain@v1
+        uses: actions/checkout@v7.0.1
+      - uses: actions-rs/toolchain@v1.0.6
         with:
           toolchain: stable
       - name: Login to crates.io
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: login
           args: ${{ secrets.CRATES_TOKEN }}
       - name: Publish new version
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: publish
