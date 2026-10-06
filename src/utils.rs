@@ -1,4 +1,5 @@
-use rusoto_cloudformation::*;
+use aws_sdk_cloudformation::Client as CloudFormationClient;
+use aws_sdk_cloudformation::types::{Change, StackEvent};
 use colored::*;
 use std::time::Duration;
 use std::thread::sleep;
@@ -12,17 +13,17 @@ pub fn pretty_panic(message: String) {
 }
 
 pub fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTime<Local>) {
-    events.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
+    events.sort_by(|x, y| x.timestamp().cmp(&y.timestamp()));
     for i in 0..events.len() {
 
         let line = &events[i];
-        let event_time = Utc.datetime_from_str(&line.timestamp.as_ref(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+        let event_time = Utc.datetime_from_str(&line.timestamp().unwrap().to_string(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
         if start_time.lt(&event_time) {
             println!("{:25.25} {:70.70} {:50.50} {:}",
-                     match_status_color(line.resource_status.as_ref().unwrap(), line.timestamp.as_ref()),
-                     match_status_color(line.resource_status.as_ref().unwrap(), line.logical_resource_id.as_ref().unwrap()),
-                     match_status_color(line.resource_status.as_ref().unwrap(), line.resource_status.as_ref().unwrap()),
-                     match_status_color(line.resource_status.as_ref().unwrap(), line.resource_status_reason.as_ref().unwrap_or(&"".to_string()))
+                     match_status_color(line.resource_status().unwrap().as_str(), line.timestamp().unwrap().to_string().as_str()),
+                     match_status_color(line.resource_status().unwrap().as_str(), line.logical_resource_id().unwrap()),
+                     match_status_color(line.resource_status().unwrap().as_str(), line.resource_status().unwrap().as_str()),
+                     match_status_color(line.resource_status().unwrap().as_str(), line.resource_status_reason().unwrap_or(""))
             );
         }
     }
@@ -35,13 +36,10 @@ pub async fn lookup_stackid_to_name(stack_name: String, client: CloudFormationCl
 
 #[async_recursion]
 async fn lookup_stackid_to_name_rek(stack_name: String, client: CloudFormationClient, i: u64) -> String {
-    let describe_input = DescribeStacksInput {
-        next_token: None,
-        stack_name: Some(stack_name.clone()),
-    };
-    return match client.describe_stacks(describe_input.clone()).await {
+    let describe_input = client.describe_stacks().stack_name(stack_name.clone());
+    return match describe_input.send().await {
         Ok(result) => {
-            result.stacks.expect("Something went wrong describing stack").iter().max_by_key(|s| s.creation_time.clone()).expect("Max failed in stack describe").stack_id.clone().expect("Something went wrong describing stack")
+            result.stacks().iter().max_by_key(|s| s.creation_time()).expect("Max failed in stack describe").stack_id().expect("Something went wrong describing stack").to_string()
         },
         Err(e) => {
             let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
@@ -77,18 +75,18 @@ pub fn match_status_color(status: &str, msg: &str) -> ColoredString {
 }
 
 // TODO: improve and include more details and scope info
-pub fn pretty_print_resource_change(change: Change) {
-    match change.resource_change {
+pub fn pretty_print_resource_change(change: &Change) {
+    match change.resource_change() {
         Some(resource) => {
-            let action = resource.action.unwrap_or("-".to_string());
-            // let details = resource.details;
-            let logical_resource_id = resource.logical_resource_id.unwrap_or("-".to_string());
-            let physical_resource_id = resource.physical_resource_id.unwrap_or("-".to_string());
-            let replacement = resource.replacement.unwrap_or("-".to_string());
-            let resource_type = resource.resource_type.unwrap_or("-".to_string());
-            let scope = resource.scope.unwrap_or(vec!["unknown".to_string()]).join(",");
+            let action = resource.action().map(|a| a.as_str().to_string()).unwrap_or("-".to_string());
+            // let details = resource.details();
+            let logical_resource_id = resource.logical_resource_id().unwrap_or("-");
+            let physical_resource_id = resource.physical_resource_id().unwrap_or("-");
+            let replacement = resource.replacement().map(|r| matches!(r, aws_sdk_cloudformation::types::Replacement::True)).unwrap_or(false);
+            let resource_type = resource.resource_type().unwrap_or("-");
+            let scope = resource.scope().iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",");
 
-            println!("{}", match_change_color(action.clone(), replacement == "True", format!("{:6.6} {:7.7} {:50.50} {:50.50} {:70.70} {:}", action, replacement, resource_type, logical_resource_id, physical_resource_id, scope)));
+            println!("{}", match_change_color(action.clone(), replacement, format!("{:6.6} {:7.7} {:50.50} {:50.50} {:70.70} {:}", action, replacement, resource_type, logical_resource_id, physical_resource_id, scope)));
         }
         None => {}
     }
