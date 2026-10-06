@@ -11,8 +11,82 @@ on:
   pull_request:
 
 jobs:
-  build:
+  arm64:
     runs-on: arvato
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.6
+      - name: Docker Meta
+        id: docker_meta
+        uses: crazy-max/ghaction-docker-meta@v5
+        with:
+          images: ghcr.io/arvatoaws-labs/sfn-ng
+          flavor: |
+            latest=false
+            suffix=-arm64
+          tag-semver: |
+            {{version}}
+            {{major}}.{{minor}}
+            {{major}}
+      - name: Login to GitHub Packages Docker Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          #username: jenkins-arvato
+          #password: ${{ secrets.CR_PAT }}
+      - name: Build and Push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.event_name != 'pull_request' }}
+          pull: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+  amd64:
+    runs-on: arvato-x86
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.6
+      - name: Docker Meta
+        id: docker_meta
+        uses: crazy-max/ghaction-docker-meta@v5
+        with:
+          images: ghcr.io/arvatoaws-labs/sfn-ng
+          flavor: |
+            latest=false
+            suffix=-amd64
+          tag-semver: |
+            {{version}}
+            {{major}}.{{minor}}
+            {{major}}
+      - name: Login to GitHub Packages Docker Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          #username: jenkins-arvato
+          #password: ${{ secrets.CR_PAT }}
+      - name: Build and Push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.event_name != 'pull_request' }}
+          pull: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+  manifest:
+    runs-on: arvato
+    needs: [arm64, amd64]
+    if: github.event_name != 'pull_request'
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.6
@@ -25,19 +99,7 @@ jobs:
             {{version}}
             {{major}}.{{minor}}
             {{major}}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          install: true
-          version: latest
-          driver-opts: image=moby/buildkit:master
       - name: Login to GitHub Packages Docker Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -45,11 +107,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           #username: jenkins-arvato
           #password: ${{ secrets.CR_PAT }}
-      - name: Build and Push
-        uses: docker/build-push-action@v5
+      - name: Create Docker Manifest
+        if: steps.docker_meta.outputs.tags != ''
+        uses: int128/docker-manifest-create-action@v2
         with:
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          pull: true
+          index-annotations: ${{ steps.docker_meta.outputs.labels }}
           tags: ${{ steps.docker_meta.outputs.tags }}
-          labels: ${{ steps.docker_meta.outputs.labels }}
+          sources: |
+            ghcr.io/arvatoaws-labs/sfn-ng@${{ needs.arm64.outputs.image-digest }}
+            ghcr.io/arvatoaws-labs/sfn-ng@${{ needs.amd64.outputs.image-digest }}
