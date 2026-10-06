@@ -2,7 +2,7 @@
 name = "sfn-ng"
 version = "0.2.30"
 authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>", "Stephan Telahr <stephan.telahr@bertelsmann.de>"]
-edition = "2021"
+edition = "2024"
 license = "GPL-3.0"
 description = "Rust replacement for sfn with more features"
 homepage = "https://github.com/arvatoaws-labs/sfn-ng"

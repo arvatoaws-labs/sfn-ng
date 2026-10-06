@@ -16,7 +16,6 @@ use colored::*;
 use itertools::Itertools;
 use std::fs;
 use std::time::Duration;
-use std::thread::sleep;
 use std::io::{Write, stdin, stdout};
 use serde_json::Value;
 use chrono::{DateTime, Local, NaiveDateTime, Duration as ChronoDuration};
@@ -24,9 +23,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use async_recursion::async_recursion;
 use std::process::{Command as StdCommand, Stdio};
-use string_morph;
-use walkdir::WalkDir;
 use string_morph::Morph;
+use walkdir::WalkDir;
 use json_structural_diff::JsonDiff;
 
 pub mod utils;
@@ -93,13 +91,13 @@ fn make_tag(key: String, value: String) -> Tag {
 }
 
 async fn lookup_stack_outputs(stack_name: String, client: CloudFormationClient) -> Vec<Parameter> {
-  return lookup_stack_outputs_rek(stack_name, client, 0).await;
+  lookup_stack_outputs_rek(stack_name, client, 0).await
 }
 
 #[async_recursion]
 async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClient, i: u64) -> Vec<Parameter> {
   let describe_input = client.describe_stacks().stack_name(stack_name.clone());
-  return match describe_input.send().await {
+  match describe_input.send().await {
     Ok(result) => {
       result.stacks()[0].outputs().iter().map(|output| {
         make_parameter(
@@ -112,13 +110,13 @@ async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClie
 
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in describe stack: {}", e);
       } else {
         println!("Something went wrong describing stack (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       lookup_stack_outputs_rek(stack_name, client, i+1).await
     }
   }
@@ -127,18 +125,18 @@ async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClie
 #[async_recursion]
 async fn generate_completion_test_rek(stack_name: Option<String>, client: CloudFormationClient, i: u64) -> Vec<Stack> {
   let describe_input = client.describe_stacks().set_stack_name(stack_name.clone());
-  return match describe_input.send().await {
+  match describe_input.send().await {
     Ok(result) => {
       result.stacks().to_vec()
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in describing Stack: {}", e);
       } else {
         println!("Something went wrong in describing Stack (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       generate_completion_test_rek(stack_name, client, i+1).await
     }
   }
@@ -152,23 +150,23 @@ async fn wait_for_bucket_creation(client: S3Client, name: String, i: u64) {
       match buckets.binary_search_by(|bucket| bucket.name().unwrap_or("-").cmp(&name)) {
         Ok(_) => {}
         Err(e) => {
-          let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+          let wait_time = 2000 + 1000 * i * i;
           if i > 20 {
             panic!("Retry limit reached in waiting for template bucket to create: {}", e);
           }
-          sleep(Duration::from_millis(wait_time));
+          tokio::time::sleep(Duration::from_millis(wait_time)).await;
           wait_for_bucket_creation(client, name, i+1).await
         }
       }
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in waiting for template bucket to create: {}", e);
       } else {
         println!("Something went wrong in waiting for template bucket (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       wait_for_bucket_creation(client, name, i+1).await
     }
   }
@@ -183,34 +181,34 @@ async fn wait_for_changeset_creation(client: CloudFormationClient, change_set_na
         Some(status) => match status.as_str() {
           "CREATE_COMPLETE" => {}
           "CREATE_IN_PROGRESS" | "CREATE_PENDING" => {
-            let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+            let wait_time = 2000 + 1000 * i * i;
             if i > 20 {
               panic!("Retry limit reached in waiting for changeset to complete");
             }
-            sleep(Duration::from_millis(wait_time));
+            tokio::time::sleep(Duration::from_millis(wait_time)).await;
             wait_for_changeset_creation(client, change_set_name, stack_name, i+1).await
           }
-          "FAILED" => {pretty_panic(format!("Failed state in describe change set: {}", &result.status_reason().unwrap_or("Empty status_reason")))}
+          "FAILED" => {pretty_panic(format!("Failed state in describe change set: {}", result.status_reason().unwrap_or("Empty status_reason")))}
           x => {panic!("Unknown state in describe change set: {}", x)}
         },
         None => {
-          let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+          let wait_time = 2000 + 1000 * i * i;
           if i > 20 {
             panic!("Retry limit reached in waiting for changeset to complete");
           }
-          sleep(Duration::from_millis(wait_time));
+          tokio::time::sleep(Duration::from_millis(wait_time)).await;
           wait_for_changeset_creation(client, change_set_name, stack_name, i+1).await
         }
       }
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in describing changeset: {}", e);
       } else {
         println!("Something went wrong in describing changeset (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       wait_for_changeset_creation(client, change_set_name, stack_name, i+1).await
     }
   }
@@ -219,16 +217,16 @@ async fn wait_for_changeset_creation(client: CloudFormationClient, change_set_na
 #[async_recursion]
 async fn generate_events_output_rek(stack_name: Option<String>, client: CloudFormationClient, i: u64) -> Vec<StackEvent> {
   let events_input = client.describe_stack_events().set_stack_name(stack_name.clone());
-  return match events_input.send().await {
+  match events_input.send().await {
     Ok(result) => result.stack_events().to_vec(),
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in getting stack events: {}", e);
       } else {
         println!("Something went wrong in getting stack events (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       generate_events_output_rek(stack_name, client, i+1).await
     }
   }
@@ -244,7 +242,7 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     let completion_test = generate_completion_test_rek(stack_id.clone(), client.clone(), 0).await;
     let events = generate_events_output_rek(stack_id.clone(), client.clone(), 0).await;
     pretty_print_stack_events(events.clone(), last_printed);
-    last_printed = NaiveDateTime::parse_from_str(events.iter().max_by_key(|event| event.timestamp().clone()).unwrap().timestamp().unwrap().to_string().as_str(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
+    last_printed = NaiveDateTime::parse_from_str(events.iter().max_by_key(|event| event.timestamp()).unwrap().timestamp().unwrap().to_string().as_str(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
     if [
       "CREATE_COMPLETE",
       "UPDATE_COMPLETE",
@@ -259,7 +257,7 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     ].contains(&completion_test[0].stack_status().unwrap().as_str()) {
       break;
     }
-    sleep(Duration::from_millis(2000));
+    tokio::time::sleep(Duration::from_millis(2000)).await;
   }
 
   // TODO: Final printout? Status?, Exit-Code!
@@ -287,28 +285,27 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     if !outputs.is_empty() {
       println!("Outputs:");
       for output in outputs.iter().sorted_by_key(|output| output.output_key().map(|k| k.to_string())) {
-        println!("{:50.50}: {}", output.output_key().unwrap_or("-").to_string().bold(), output.output_value().unwrap_or("-").to_string());
+        println!("{:50.50}: {}", output.output_key().unwrap_or("-").to_string().bold(), output.output_value().unwrap_or("-"));
       }
     }
   }
 }
 
 fn get_template_params(json: Value, is_update: bool) -> Vec<Parameter> {
-  if json.get("Parameters").is_some() {
-    let params = json.get("Parameters").unwrap().as_object().unwrap();
-    return params.iter().map(|(key, value)| {
+  if let Some(params) = json.get("Parameters").and_then(Value::as_object) {
+    params.iter().map(|(key, value)| {
       let optional_default = value.get("Default");
 
-      let val = if optional_default.is_some() { value_to_string(&optional_default.unwrap().clone()) } else { None };
-      return make_parameter(
+      let val = optional_default.and_then(value_to_string);
+      make_parameter(
         Some(key.to_string()),
         val,
         None,
         if is_update { Some(optional_default.is_some()) } else { None },
-      );
-    }).collect();
+      )
+    }).collect()
   } else {
-    return vec![];
+    vec![]
   }
 }
 
@@ -331,104 +328,74 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
   if Path::new("stack-parameters").exists() {
     for entry in WalkDir::new("stack-parameters") {
       let entry = entry.unwrap();
-      if entry.file_name().to_str().unwrap().to_string() == format!("{}.rb", stack_name) {
+      let file_name = entry.file_name().to_str().unwrap();
+      if file_name == format!("{}.rb", stack_name) {
         println!("Using parameter file: {}", entry.path().display());
-        if rb_filename.len() > 0 || json_filename.len() > 0 {
+        if !rb_filename.is_empty() || !json_filename.is_empty() {
           println!("{}", "Warning: Overriding stack parameter file to be used with new finding".yellow());
         }
-        rb_filename = format!("{}", entry.path().display());
-      } else if entry.file_name().to_str().unwrap().to_string() == format!("{}.json", stack_name) {
+        rb_filename = entry.path().display().to_string();
+      } else if file_name == format!("{}.json", stack_name) {
         println!("Using parameter file: {}", entry.path().display());
-        if rb_filename.len() > 0 || json_filename.len() > 0 {
+        if !rb_filename.is_empty() || !json_filename.is_empty() {
           println!("{}", "Warning: Overriding stack parameter file to be used with new finding".yellow());
         }
-        json_filename = format!("{}", entry.path().display());
+        json_filename = entry.path().display().to_string();
       }
     }
   }
-  if rb_filename.len() == 0 && json_filename.len() == 0 {
+  if rb_filename.is_empty() && json_filename.is_empty() {
     println!("{}", "Warning: no stack parameter file found".yellow());
   }
 
-  // let rb_filename = format!("stack-parameters/{}.rb", stack_name);
-  let body: Option<String>;
-  if Path::new(&rb_filename.clone()).exists() {
-    body = Some(ruby_stack_parameters(rb_filename));
+  let body: String = if !rb_filename.is_empty() {
+    ruby_stack_parameters(rb_filename)
+  } else if !json_filename.is_empty() {
+    fs::read_to_string(json_filename).expect("Something went wrong reading json stack params")
   } else {
-    // let json_filename = format!("stack-parameters/{}.json", stack_name);
-    if Path::new(&json_filename.clone()).exists() {
-      body = Some(fs::read_to_string(json_filename).expect("Something went wrong reading json stack params"));
-    } else {
-      return None;
-    }
-  }
-  let content: Value = serde_json::from_str(&&*(body.clone().unwrap())).unwrap();
-
-  let template = match content.get("template") {
-    Some(template) => {
-      Some(value_to_string(&template.clone()).expect("Template path is not a string"))
-    }
-    None => { None }
+    return None;
   };
+  let content: Value = serde_json::from_str(&body).unwrap();
 
-  let mut region= default_region();
-  let parsed_region = content.get("region");
-  if parsed_region.is_some() {
-    region = map_region(&*value_to_string(parsed_region.unwrap()).expect("Region parsing failed"));
-  }
+  let template = content.get("template").map(|template| value_to_string(template).expect("Template path is not a string"));
 
-  let tags_raw = content.get("tags");
-  let mut tags: Option<HashMap<String, String>> = None;
-  if tags_raw.is_some() {
-    tags = Some(tags_raw.unwrap().as_object().expect("Tags malformed in stack parameter file").iter().map(|(key, value)| {
-      return (key.clone(), value_to_string(&value.clone()).expect("Tag value isn't string convertible"));
-    }).collect());
-  }
-  let mappings_raw = content.get("mappings");
-  let mut mappings: Option<HashMap<String, String>> = None;
-  if mappings_raw.is_some() {
-    mappings = Some(mappings_raw.unwrap().as_object().expect("Mappings malformed in stack parameter file").iter().map(|(key, value)| {
-      return (string_morph::to_pascal_case(key), value_to_string(&value.clone()).expect("Mappings value isn't string convertible").to_pascal_case());
-    }).collect());
-  }
-  let apply_mappings_raw = content.get("apply_mappings");
-  let apply_mappings: Option<Vec<MappingValue>> = match apply_mappings_raw {
-    Some(raw_content) => {
-      Some(raw_content.as_object().expect("Apply Mappings malformed in stack parameter file").iter().map(|(key, value)| {
-        let obj = value.as_object().expect("Apply Mappings malformed in stack parameter file");
-        let output = MappingValue {
-          stack_name: match obj.get("stack_name") {
-            Some(stack_name) => value_to_string(stack_name),
-            None => None
-          },
-          input_name: key.to_string().to_pascal_case(),
-          output_name: value_to_string(obj.get("output_name").expect("Apply Mappings must contain the name of an output")).expect("Apply Mappings Output is not string convertible").to_pascal_case(),
-          region: match obj.get("region") {
-            Some(region) => Some(map_region(&*value_to_string(region).expect("Region in apply mappings not string covertible"))),
-            None => None
-          }
-        };
-        // println!("Found mapping {}, {}, {}, {}", output.clone().stack_name.unwrap(), output.clone().region.unwrap().name(), output.clone().input_name, output.clone().output_name);
-        return output;
-      }).collect())
-    },
-    None => None
-  };
-
-  let parameters_raw = content.get("parameters");
-  let mut parameters: Option<HashMap<String, String>> = None;
-  if parameters_raw.is_some() {
-    parameters = Some(parameters_raw.unwrap().as_object().expect("Parameters malformed in stack parameter file").iter().map(|(key, value)| {
-      return (key.clone(), value_to_string(&value.clone()).expect("Parameter value isn't string convertible"));
-    }).collect());
-  }
-  let apply_stacks_raw = content.get("apply_stacks");
-  let mut apply_stacks = None;
-  if apply_stacks_raw.is_some() {
-    apply_stacks = Some(apply_stacks_raw.unwrap().as_array().expect("Apply stacks malformed in stack parameter file").iter().map(|v| value_to_string(&v.clone()).expect("Stack name not stringifiable")).collect());
+  let mut region = default_region();
+  if let Some(parsed_region) = content.get("region") {
+    region = map_region(&value_to_string(parsed_region).expect("Region parsing failed"));
   }
 
-  return Some(StackParameterFile {
+  let tags = content.get("tags").map(|tags_raw| {
+    tags_raw.as_object().expect("Tags malformed in stack parameter file").iter().map(|(key, value)| {
+      (key.clone(), value_to_string(value).expect("Tag value isn't string convertible"))
+    }).collect()
+  });
+  let mappings = content.get("mappings").map(|mappings_raw| {
+    mappings_raw.as_object().expect("Mappings malformed in stack parameter file").iter().map(|(key, value)| {
+      (string_morph::to_pascal_case(key), value_to_string(value).expect("Mappings value isn't string convertible").to_pascal_case())
+    }).collect()
+  });
+  let apply_mappings = content.get("apply_mappings").map(|raw_content| {
+    raw_content.as_object().expect("Apply Mappings malformed in stack parameter file").iter().map(|(key, value)| {
+      let obj = value.as_object().expect("Apply Mappings malformed in stack parameter file");
+      MappingValue {
+        stack_name: obj.get("stack_name").and_then(value_to_string),
+        input_name: key.to_string().to_pascal_case(),
+        output_name: value_to_string(obj.get("output_name").expect("Apply Mappings must contain the name of an output")).expect("Apply Mappings Output is not string convertible").to_pascal_case(),
+        region: obj.get("region").map(|region| map_region(&value_to_string(region).expect("Region in apply mappings not string covertible")))
+      }
+    }).collect()
+  });
+
+  let parameters = content.get("parameters").map(|parameters_raw| {
+    parameters_raw.as_object().expect("Parameters malformed in stack parameter file").iter().map(|(key, value)| {
+      (key.clone(), value_to_string(value).expect("Parameter value isn't string convertible"))
+    }).collect()
+  });
+  let apply_stacks = content.get("apply_stacks").map(|apply_stacks_raw| {
+    apply_stacks_raw.as_array().expect("Apply stacks malformed in stack parameter file").iter().map(|v| value_to_string(v).expect("Stack name not stringifiable")).collect()
+  });
+
+  Some(StackParameterFile {
     apply_stacks,
     parameters,
     mappings,
@@ -437,10 +404,6 @@ fn get_stack_parameter_file(stack_name: String) -> Option<StackParameterFile> {
     template,
     region
   })
-}
-
-fn string_to_static_str(s: String) -> &'static str {
-  Box::leak(s.into_boxed_str())
 }
 
 #[async_recursion]
@@ -459,20 +422,19 @@ async fn list_stacks_prep(ec2: Ec2Client, list_opts: &ArgMatches, i: u64) {
       }
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in list stacks prep: {}", e);
       } else {
         println!("Something went wrong in list stacks prep (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_stacks_prep(ec2, list_opts, i + 1).await
     }
   }
 }
 
 async fn list_stacks_main(client: CloudFormationClient, region: Region, list_opts: &ArgMatches) {
-    // println!();
     println!("Listing stacks for region {}", region_name(&region).bright_white().bold());
     let mut list_stacks_input = client.list_stacks();
     if list_opts.contains_id("status") {
@@ -523,14 +485,13 @@ async fn list_stacks(matches: ArgMatches) {
 }
 
 #[async_recursion]
-async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: aws_sdk_cloudformation::operation::list_stacks::builders::ListStacksFluentBuilder, i: u64) {
+async fn list_stacks_rek(_client: CloudFormationClient, list_stacks_input: aws_sdk_cloudformation::operation::list_stacks::builders::ListStacksFluentBuilder, i: u64) {
   match list_stacks_input.clone().send().await {
     Ok(output) => {
       let stack_list = output.stack_summaries();
       if stack_list.is_empty() {
         println!("No stacks");
       } else {
-        // println!("{}", "Stacks:".bold());
         for (status, grouped_stack_list) in stack_list.iter().map(|stack| (stack.stack_status().map(|s| s.as_str().to_string()).unwrap_or("UNKNOWN".to_string()), stack.clone())).into_group_map().iter().sorted_by_key(|(status, _)| *status) {
           println!("{}", match_status_color(status, status).bold());
           for stack in grouped_stack_list {
@@ -541,20 +502,20 @@ async fn list_stacks_rek(client: CloudFormationClient, list_stacks_input: aws_sd
       }
     },
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in list stacks: {}", e);
       } else {
         println!("Something went wrong listing stacks (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
-      list_stacks_rek(client, list_stacks_input, i+1).await
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
+      list_stacks_rek(_client, list_stacks_input, i+1).await
     }
   }
 }
 
 fn generate_matches() -> ArgMatches {
-    return Command::new("sfn-ng")
+    Command::new("sfn-ng")
         .version("0.2.30")
         .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
         .about("Does sparkleformation command stuff")
@@ -802,31 +763,31 @@ async fn create_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in create stacks: {}", e);
       } else {
         println!("Something went wrong creating stacks (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       create_stack_rek(poll, client, region.clone(), create_stack_input, start_time, i+1).await
     }
   }
 }
 
 #[async_recursion]
-async fn delete_stack_rek(client: CloudFormationClient, delete_stack_input: aws_sdk_cloudformation::operation::delete_stack::builders::DeleteStackFluentBuilder, i: u64) {
+async fn delete_stack_rek(_client: CloudFormationClient, delete_stack_input: aws_sdk_cloudformation::operation::delete_stack::builders::DeleteStackFluentBuilder, i: u64) {
   match delete_stack_input.clone().send().await {
     Ok(_) => {},
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in delete stack: {}", e);
       } else {
         println!("Something went wrong deleting stack (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
-      delete_stack_rek(client, delete_stack_input, i+1).await
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
+      delete_stack_rek(_client, delete_stack_input, i+1).await
     }
   }
 }
@@ -860,13 +821,13 @@ async fn get_old_stack_parameters_rek(stack_name: String, region: Region, i: u64
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in get_old_stack_parameters_rek: {}", e);
       } else {
         println!("Something went wrong in get_old_stack_parameters_rek (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_old_stack_parameters_rek(stack_name, region, i+1).await
     }
   }
@@ -881,13 +842,13 @@ async fn get_old_template_body_rek(stack_name: String, region: Region, i: u64) -
       output.template_body().expect("No template body returned from existing stack").to_string()
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in get_old_template_body_rek: {}", e);
       } else {
         println!("Something went wrong in get_old_template_body_rek (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_old_template_body_rek(stack_name, region, i+1).await
     }
   }
@@ -916,8 +877,8 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
 
     let mut region = default_region();
-    if stack_parameter_file.clone().is_some() {
-        region = stack_parameter_file.clone().unwrap().region;
+    if let Some(stack_parameter_file) = stack_parameter_file.as_ref() {
+        region = stack_parameter_file.region.clone();
     }
     let client = build_cfn_client(region.clone()).await;
 
@@ -926,15 +887,15 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     let explicit_parameters: Vec<Parameter> = match opts.get_many::<String>("parameters") {
         Some(parameters_list) => parameters_list.map(|input| {
             let pair = input.split("=").collect::<Vec<_>>();
-      return make_parameter(
-        Some(pair[0].to_string()),
-        Some(pair[1].to_string()),
-        None,
-        None,
-      );
-    }).collect::<Vec<Parameter>>(),
-    None => Vec::new()
-  };
+            make_parameter(
+              Some(pair[0].to_string()),
+              Some(pair[1].to_string()),
+              None,
+              None,
+            )
+        }).collect::<Vec<Parameter>>(),
+        None => Vec::new()
+    };
 
   /*
 
@@ -960,67 +921,61 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     Some(list) => list.map(|input| {
       let pair = input.split("=").collect::<Vec<&str>>();
       // TODO: allow for stack & region let enc_output = pair[0].to_string().clone().split("__");
-      return MappingValue {
+      MappingValue {
         region: None,
         stack_name: None,
         output_name: string_morph::to_pascal_case(pair[0]),
         input_name: string_morph::to_pascal_case(pair[1])
-      };
+      }
     }).collect(),
-    None => vec!()
+    None => vec![]
   };
-  if stack_parameter_file.clone().is_some() {
-    let stack_parameter_file = stack_parameter_file.clone().unwrap();
-    mappings.extend(stack_parameter_file.mappings.unwrap_or(HashMap::new()).iter().map(|(key, value)| {
-      return MappingValue {
+  if let Some(stack_parameter_file) = stack_parameter_file.as_ref() {
+    mappings.extend(stack_parameter_file.mappings.as_ref().unwrap_or(&HashMap::new()).iter().map(|(key, value)| {
+      MappingValue {
         region: None,
         stack_name: None,
         output_name: string_morph::to_pascal_case(key),
         input_name: string_morph::to_pascal_case(value)
-      };
+      }
     }).collect::<Vec<MappingValue>>());
-    if stack_parameter_file.apply_mappings.is_some() {
-      mappings.extend(stack_parameter_file.apply_mappings.unwrap());
+    if let Some(apply_mappings) = stack_parameter_file.apply_mappings.as_ref() {
+      mappings.extend(apply_mappings.clone());
     }
   }
 
   // TODO: Set default Tags by env, if not set by --tags manually
   let mut tags_vec: Vec<Tag> = vec![];
-  if stack_parameter_file.clone().is_some() {
-    let stack_parameter_file = stack_parameter_file.clone().unwrap();
-    if stack_parameter_file.tags.is_some() {
-      for (key, value) in stack_parameter_file.tags.unwrap() {
-        tags_vec.push(make_tag(key.clone(), value.clone()));
-      }
+  if let Some(stack_parameter_file) = stack_parameter_file.as_ref()
+    && let Some(tags) = stack_parameter_file.tags.as_ref() {
+    for (key, value) in tags {
+      tags_vec.push(make_tag(key.clone(), value.clone()));
     }
   }
 
-  match opts.get_many::<String>("tags") {
-    Some(mytags) => {
-      for input in mytags {
-        let pair = input.split("=").collect::<Vec<&str>>();
-        let tag = make_tag(pair[0].to_string(), pair[1].to_string());
-        let pos = tags_vec.iter().position(|ex_tag| ex_tag.key() == tag.key());
-        if pos.is_some() {
-          tags_vec.push(tag);
-          tags_vec.swap_remove(pos.unwrap());
-        } else {
-          tags_vec.push(tag);
-        }
+  if let Some(mytags) = opts.get_many::<String>("tags") {
+    for input in mytags {
+      let pair = input.split("=").collect::<Vec<&str>>();
+      let tag = make_tag(pair[0].to_string(), pair[1].to_string());
+      let pos = tags_vec.iter().position(|ex_tag| ex_tag.key() == tag.key());
+      if let Some(pos) = pos {
+        tags_vec.push(tag);
+        tags_vec.swap_remove(pos);
+      } else {
+        tags_vec.push(tag);
       }
-    },
-    None => {}
-  };
+    }
+  }
   if !tags_vec.iter().any(|tag| tag.key() == Some("Projekt")) {
     let mut input = String::new();
     print!("Projekt?: ");
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect("Cancel Stack creation");
     input.pop();
-    if input.clone().is_empty() {
+    if input.is_empty() {
       panic!("No project tag set by any means");
     } else {
-      tags_vec.push(make_tag("Projekt".to_string(), input.clone()));
+      tags_vec.push(make_tag("Projekt".to_string(), input));
     }
   }
 
@@ -1031,16 +986,14 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     me = split[1].to_string();
   }
   tags_vec.push(make_tag("creator".to_string(), me));
-  match search_for_creator {
-    Some(pos) => {tags_vec.swap_remove(pos);},
-    None => {}
+  if let Some(pos) = search_for_creator {
+    tags_vec.swap_remove(pos);
   }
   let tags = Some(tags_vec);
-  let mut template_file = opts.get_one::<String>("file").map(|s| s.as_str());
-  if stack_parameter_file.clone().is_some() {
-    if stack_parameter_file.clone().unwrap().template.is_some() {
-      template_file = Some(string_to_static_str(stack_parameter_file.clone().unwrap().template.unwrap()));
-    }
+  let mut template_file: Option<String> = opts.get_one::<String>("file").map(|s| s.to_string());
+  if let Some(stack_parameter_file) = stack_parameter_file.as_ref()
+    && let Some(template) = stack_parameter_file.template.as_ref() {
+    template_file = Some(template.clone());
   }
   let s3 = build_s3_client(region.clone()).await;
   let bucket = find_template_bucket_or_create_it_rek(region.clone(), 0).await;
@@ -1053,26 +1006,23 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     old_params = get_old_stack_parameters_rek(stack_name.clone(), region.clone(), 0).await;
     old_params_map = old_params.iter().map(|param| (param.parameter_key().map(|k| k.to_string()).expect("Old parameter key not set"), param.parameter_value().map(|v| v.to_string()).expect("Old parameter value not set").dimmed())).collect();
   }
-  if template_file.is_some() {
-    template_body = Some(fs::read_to_string(template_file.expect("No template file specified")).expect("Something went wrong reading the file"));
-    let template_content: Value = serde_json::from_str(&&*(template_body.clone().unwrap())).unwrap();
+  if let Some(template_file) = template_file.as_ref() {
+    template_body = Some(fs::read_to_string(template_file).expect("Something went wrong reading the file"));
+    let template_content: Value = serde_json::from_str(&template_body.clone().unwrap()).unwrap();
 
     let diff = match opts.get_one::<String>("diff") {
-      Some(diff_value) => match diff_value.as_str() {
-        "true" => true,
-        _ => false
-      },
+      Some(diff_value) => diff_value.as_str() == "true",
       None => true
     };
 
     if is_upgrade && diff {
-      let old_template = serde_json::from_str(&*get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await).expect("Issue in parsing old template body as json");
+      let old_template = serde_json::from_str(&get_old_template_body_rek(stack_name.clone(), region.clone(), 0).await).expect("Issue in parsing old template body as json");
       let json_diffs = JsonDiff::diff_string(&old_template, &template_content, false);
       match json_diffs {
         Some(json_diff) => {
           println!("Changes in template:");
-          for line in json_diff.split("\n") {
-            match line.chars().nth(0) {
+          for line in json_diff.split('\n') {
+            match line.chars().next() {
               Some('+') => {
                 println!("{}", line.green());
               },
@@ -1093,7 +1043,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       println!("\n");
     }
     template_parameters = get_template_params(template_content, false); // TODO: yaml support
-    path = format!("{}/{}", template_file.expect("No template file specified").to_string(), start_time.timestamp());
+    path = format!("{}/{}", template_file, start_time.timestamp());
   } else {
     if is_upgrade {
       template_parameters = old_params;
@@ -1111,20 +1061,14 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
   upload_template_input.send().await.expect("Template couldn't be uploaded to S3");
 
   let mut apply_stack_parameters: Vec<ApplyStackParameter> = vec![];
-  let mut stacks: Vec<&str> = vec![];
-  if stack_parameter_file.clone().is_some() {
-    let stack_parameter_file = stack_parameter_file.clone().unwrap();
-    if stack_parameter_file.apply_stacks.is_some() {
-      stacks.append(&mut stack_parameter_file.apply_stacks.unwrap().iter().map(|string| string_to_static_str(string.to_string())).collect());
-    }
+  let mut stacks: Vec<String> = vec![];
+  if let Some(stack_parameter_file) = stack_parameter_file.as_ref()
+    && let Some(apply_stacks) = stack_parameter_file.apply_stacks.as_ref() {
+    stacks.extend(apply_stacks.iter().cloned());
   }
-  match opts.get_many::<String>("apply-stack") {
-    Some(applystack) => {
-      let cloneapply: Vec<&str> = applystack.map(|s| s.as_str()).collect();
-      stacks.extend(cloneapply);
-    },
-    None => {}
-  };
+  if let Some(applystack) = opts.get_many::<String>("apply-stack") {
+    stacks.extend(applystack.map(|s| s.to_string()).collect::<Vec<String>>());
+  }
 
   for stack in stacks.iter().dedup() {
     let stack_parts: Vec<&str> = stack.split("__").collect();
@@ -1149,59 +1093,41 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
 
   apply_stack_parameters.reverse();
 
-  let mut stack_params: Option<Vec<Parameter>> = None;
-  if stack_parameter_file.clone().is_some() {
-    let stack_parameter_file = stack_parameter_file.clone().unwrap();
-    if stack_parameter_file.parameters.is_some() {
-      stack_params = Some(stack_parameter_file.parameters.unwrap().iter().map(|(key, value)| make_parameter(
-        Some(key.to_string()),
-        Some(value.to_string()),
-        None,
-        None
-      )).collect());
-    }
-  }
+  let stack_params: Option<Vec<Parameter>> = if let Some(stack_parameter_file) = stack_parameter_file.as_ref() {
+    stack_parameter_file.parameters.as_ref().map(|parameters| parameters.iter().map(|(key, value)| make_parameter(
+      Some(key.to_string()),
+      Some(value.to_string()),
+      None,
+      None
+    )).collect())
+  } else {
+    None
+  };
 
   let merged_parameters = template_parameters.iter().map(|default_param| {
-    for explicit_param in explicit_parameters.clone() {
+    for explicit_param in explicit_parameters.iter() {
       if explicit_param.parameter_key() == default_param.parameter_key() {
-        return explicit_param;
+        return explicit_param.clone();
       }
     }
-    if stack_params.is_some() {
-      for stack_param in stack_params.clone().unwrap().clone() {
+    if let Some(stack_params) = stack_params.as_ref() {
+      for stack_param in stack_params.iter() {
         if stack_param.parameter_key() == default_param.parameter_key() {
-          return stack_param;
+          return stack_param.clone();
         }
       }
     }
-    for apply_param_stack in apply_stack_parameters.clone() {
-      for apply_param in apply_param_stack.clone().outputs {
+    for apply_param_stack in apply_stack_parameters.iter() {
+      for apply_param in apply_param_stack.outputs.iter() {
         let matching_mapping = mappings.iter().find(|value| {
-          let result1 = value.input_name.to_string() == default_param.clone().parameter_key().unwrap();
+          let result1 = value.input_name == default_param.parameter_key().unwrap();
           let result2 = value.region.is_none() || (region_eq(value.region.as_ref().unwrap(), &apply_param_stack.region));
           let result3 = value.stack_name.is_none() || (*value.stack_name.as_ref().unwrap() == apply_param_stack.stack_name);
-          let result = result1 && result2 && result3;
-          // if result1 && result3 {
-          //   println!("Debug match {} {} {} {} {} {} {} {} {} {}",
-          //            result1,
-          //            result2,
-          //            result3,
-          //            default_param.clone().parameter_key().unwrap(),
-          //            value.input_name.to_string(),
-          //            region_name(value.region.as_ref().unwrap()),
-          //            region_name(&apply_param_stack.region),
-          //            value.stack_name.as_ref().unwrap(),
-          //            value.output_name.to_string(),
-          //            apply_param.clone().parameter_value().unwrap()
-          //   );
-          // }
-          return result;
+          result1 && result2 && result3
         });
-        if matching_mapping.is_some() {
-          let mapping_value = matching_mapping.unwrap();
-          if apply_param.parameter_key().unwrap() == mapping_value.output_name.to_string() {
-            println!("Mapping Matched input:{} output:{}", mapping_value.input_name.to_string(), mapping_value.output_name.to_string());
+        if let Some(mapping_value) = matching_mapping {
+          if apply_param.parameter_key().unwrap() == mapping_value.output_name {
+            println!("Mapping Matched input:{} output:{}", mapping_value.input_name, mapping_value.output_name);
             return make_parameter(
               Some(default_param.parameter_key().unwrap().to_string()),
               apply_param.parameter_value().map(|v| v.to_string()),
@@ -1211,25 +1137,24 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
           }
         } else {
           if apply_param.parameter_key() == default_param.parameter_key() {
-            return apply_param;
+            return apply_param.clone();
           }
         }
       }
     }
-    return default_param.clone();
+    default_param.clone()
   }).collect::<Vec<Parameter>>();
 
   let mut dirty_flag_parameter_header = false;
   let used_parameters = merged_parameters.iter().map(|param| {
-    if opts.contains_id("defaults") {
-      if param.parameter_value().is_some() {
-        return make_parameter(
-          param.parameter_key().map(|k| k.to_string()),
-          param.parameter_value().map(|v| v.to_string()),
-          param.resolved_value().map(|v| v.to_string()),
-          param.use_previous_value()
-        );
-      }
+    if opts.contains_id("defaults")
+      && param.parameter_value().is_some() {
+      return make_parameter(
+        param.parameter_key().map(|k| k.to_string()),
+        param.parameter_value().map(|v| v.to_string()),
+        param.resolved_value().map(|v| v.to_string()),
+        param.use_previous_value()
+      );
     }
     if is_upgrade {
       let new_word = "new".italic();
@@ -1261,29 +1186,24 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     stdout().flush().unwrap();
     stdin().read_line(&mut input).expect("Cancel Stack creation");
     input.pop();
-    if !input.clone().is_empty() {
-      // println!("Input: {}, Characters: {}",input.clone(), input.clone().chars().count());
-      return make_parameter(
+    if !input.is_empty() {
+      make_parameter(
         param.parameter_key().map(|k| k.to_string()),
-        Some(input.clone()),
+        Some(input),
         None,
         None
       )
     } else {
-      return make_parameter(
+      make_parameter(
         param.parameter_key().map(|k| k.to_string()),
         param.parameter_value().map(|v| v.to_string()),
         param.resolved_value().map(|v| v.to_string()),
         param.use_previous_value()
-      );
+      )
     }
-    // Pretty Print: param // no_echo?
-    // Tippen -> Input
-    // if Input == Einfach Enter return param
-    // else return new  Parameter ( key = param.key, value = input.value )
   }).collect::<Vec<Parameter>>();
-  
-  return StackInput {
+
+  StackInput {
     stack_name,
     region,
     used_parameters,
@@ -1291,11 +1211,11 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
     client,
     bucket,
     path
-  };
+  }
 }
 
 #[async_recursion]
-async fn create_changeset_diff_display(client: CloudFormationClient, change_set_name: String, stack_name: Option<String>, next_token: Option<String>, start_time: DateTime<Local>, i: u64) {
+async fn create_changeset_diff_display(client: CloudFormationClient, change_set_name: String, stack_name: Option<String>, next_token: Option<String>, _start_time: DateTime<Local>, i: u64) {
   if next_token.is_none() {
     wait_for_changeset_creation(client.clone(), change_set_name.clone(), stack_name.clone(), 0).await;
   }
@@ -1315,22 +1235,19 @@ async fn create_changeset_diff_display(client: CloudFormationClient, change_set_
           pretty_print_resource_change(change);
         }
       }
-      match output.next_token() {
-        Some(token) => {
-          create_changeset_diff_display(client, change_set_name, stack_name, Some(token.to_string()), start_time, 0).await;
-        },
-        None => {}
+      if let Some(token) = output.next_token() {
+        create_changeset_diff_display(client, change_set_name, stack_name, Some(token.to_string()), _start_time, 0).await;
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in update stacks: {}", e);
       } else {
         println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
-      create_changeset_diff_display(client, change_set_name, stack_name, next_token, start_time, i+1).await
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
+      create_changeset_diff_display(client, change_set_name, stack_name, next_token, _start_time, i+1).await
     }
   }
 }
@@ -1344,19 +1261,20 @@ async fn execute_change_set_rek(poll: bool, client: CloudFormationClient, region
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in update stacks: {}", e);
       } else {
         println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       execute_change_set_rek(poll, client, region.clone(), stack_id, execute_changeset_input, start_time, i+1).await
     }
   }
 }
 
 #[async_recursion]
+#[allow(clippy::too_many_arguments)]
 async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Region, create_changeset_input: aws_sdk_cloudformation::operation::create_change_set::builders::CreateChangeSetFluentBuilder, change_set_name: String, stack_name: String, always_yes: bool, start_time: DateTime<Local>, i: u64) {
   match create_changeset_input.clone().send().await {
     Ok(output) => {
@@ -1371,13 +1289,13 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in update stacks: {}", e);
       } else {
         println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       update_stack_rek(poll, client, region.clone(), create_changeset_input, change_set_name, stack_name, always_yes, start_time, i+1).await
     }
   }
@@ -1444,7 +1362,7 @@ async fn bucket_settings(client: S3Client, name: String) {
     }
   }
   let get_tags = client.get_bucket_tagging().bucket(name.clone());
-  println!("Tagging bucket {}", name.clone());
+  println!("Tagging bucket {}", name);
   let mut tag_set: Vec<BucketTag>;
   match get_tags.send().await {
     Ok(tags) => {
@@ -1509,16 +1427,16 @@ async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u6
   match create_input.send().await {
     Ok(_) => {
       wait_for_bucket_creation(client, name.clone(), 0).await;
-      return name;
+      name
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in create bucket: {}", e);
       } else {
         println!("Something went wrong creating bucket (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       create_bucket_rek(client, region, name, i+1).await
     }
   }
@@ -1547,28 +1465,28 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
             }
           }
           tokio::spawn(bucket_settings(client.clone(), name.clone()));
-          return result;
+          result
         }
         Err(e) => {
-          let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+          let wait_time = 2000 + 1000 * i * i;
           if i > 20 {
             panic!("Retry limit reached in update stacks: {}", e);
           } else {
             println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
           }
-          sleep(Duration::from_millis(wait_time));
+          tokio::time::sleep(Duration::from_millis(wait_time)).await;
           find_template_bucket_or_create_it_rek(region, i+1).await
         }
       }
     }
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in find template bucket: {}", e);
       } else {
         println!("Something went wrong finding template bucket (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       find_template_bucket_or_create_it_rek(region, i+1).await
     }
   }
@@ -1587,15 +1505,15 @@ fn execute_ruby(input: String) -> String {
   }
 
   let output = child.wait_with_output().expect("Failed to read stdout");
-  return format!("{}", String::from_utf8_lossy(&output.stdout));
+  String::from_utf8_lossy(&output.stdout).to_string()
 }
 
 fn ruby_stack_parameters(rb_filename: String) -> String {
-  if Path::new(&rb_filename.clone()).exists() {
+  if Path::new(&rb_filename).exists() {
     let body = fs::read_to_string(rb_filename).expect("Something went wrong reading ruby stack params");
     // Insert require 'json', puts, Brackets, dump! & to_json
     let mut body_arr = VecDeque::new();
-    body.split("\n")
+    body.split('\n')
       .filter(|x| !x.trim().is_empty())
       .for_each(|x| body_arr.push_back(x.to_string()));
     body_arr.insert(0, "require 'json'".to_string());
@@ -1608,28 +1526,22 @@ fn ruby_stack_parameters(rb_filename: String) -> String {
 
     let mod_body = body_arr.iter().join("\n");
     let output = execute_ruby(mod_body);
-    let mut json: Value = serde_json::from_str(&*output).expect("Invalid JSON converted from ruby");
+    let mut json: Value = serde_json::from_str(&output).expect("Invalid JSON converted from ruby");
     if json.get("parameters").is_some() {
       let params = json.get("parameters").unwrap().as_object().unwrap();
-      let mut new_params: serde_json::Map<String, Value> = serde_json::Map::new();
-      for (key, value) in params {
-        new_params.insert(string_morph::to_pascal_case(key), value.clone());
-      }
-      let new_params_value = serde_json::Value::Object(new_params);
-      json.as_object_mut().unwrap().remove("parameters");
-      json.as_object_mut().unwrap().insert("parameters".to_string(), new_params_value);
+      let new_params: serde_json::Map<String, Value> = params.iter()
+        .map(|(key, value)| (string_morph::to_pascal_case(key), value.clone()))
+        .collect();
+      json.as_object_mut().unwrap().insert("parameters".to_string(), serde_json::Value::Object(new_params));
     }
     if json.get("mappings").is_some() {
       let mappings = json.get("mappings").unwrap().as_object().unwrap();
-      let mut new_mappings: serde_json::Map<String, Value> = serde_json::Map::new();
-      for (key, value) in mappings {
-        new_mappings.insert(string_morph::to_pascal_case(key), value.clone());
-      }
-      let new_mappings_value = serde_json::Value::Object(new_mappings);
-      json.as_object_mut().unwrap().remove("mappings");
-      json.as_object_mut().unwrap().insert("mappings".to_string(), new_mappings_value);
+      let new_mappings: serde_json::Map<String, Value> = mappings.iter()
+        .map(|(key, value)| (string_morph::to_pascal_case(key), value.clone()))
+        .collect();
+      json.as_object_mut().unwrap().insert("mappings".to_string(), serde_json::Value::Object(new_mappings));
     }
-    return json.to_string();
+    json.to_string()
   } else {
     panic!("Provided path invalid");
   }
@@ -1645,8 +1557,8 @@ async fn main() {
       let stack_name = attach_opts.get_one::<String>("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
       let mut region = default_region();
-      if stack_parameter_file.clone().is_some() {
-        region = stack_parameter_file.clone().unwrap().region;
+      if let Some(stack_parameter_file) = stack_parameter_file.as_ref() {
+        region = stack_parameter_file.region.clone();
       }
       let client = build_cfn_client(region.clone()).await;
 
@@ -1666,7 +1578,7 @@ async fn main() {
 
       let start_time = Local::now();
 
-      let stack_input = prepare_stack_input(update_opts, start_time.clone(), true).await;
+      let stack_input = prepare_stack_input(update_opts, start_time, true).await;
 
       let change_set_name = format!("sfn-ng-{}", start_time.timestamp());
       let stack_name = stack_input.stack_name.clone();
@@ -1684,13 +1596,7 @@ async fn main() {
         .template_url(format!("https://{}.s3.{}.amazonaws.com/{}", stack_input.bucket, region_name(&stack_input.region), stack_input.path));
 
       let always_yes = update_opts.get_flag("yes");
-      let poll = match update_opts.get_one::<String>("poll") {
-        Some(poll_value) => match poll_value.as_str() {
-          "true" => true,
-          _ => false
-        },
-        None => true
-      };
+      let poll = update_opts.get_one::<String>("poll").map(|v| v == "true").unwrap_or(true);
 
       println!("Polling: {}", poll);
 
@@ -1700,7 +1606,7 @@ async fn main() {
       let create_opts = matches.subcommand_matches("create").unwrap();
 
       let start_time = Local::now();
-      let stack_input = prepare_stack_input(create_opts, start_time.clone(), false).await;
+      let stack_input = prepare_stack_input(create_opts, start_time, false).await;
 
       let create_stack_input = stack_input.client.create_stack()
         .capabilities(aws_sdk_cloudformation::types::Capability::CapabilityIam)
@@ -1712,13 +1618,7 @@ async fn main() {
         .template_url(format!("https://{}.s3.{}.amazonaws.com/{}", stack_input.bucket, region_name(&stack_input.region), stack_input.path));
       let start_time = Local::now();
 
-      let poll = match create_opts.get_one::<String>("poll") {
-        Some(poll_value) => match poll_value.as_str() {
-          "true" => true,
-          _ => false
-        },
-        None => true
-      };
+      let poll = create_opts.get_one::<String>("poll").map(|v| v == "true").unwrap_or(true);
       create_stack_rek(poll, stack_input.client, stack_input.region, create_stack_input, start_time, 0).await;
     }
     Some("destroy") => {
@@ -1726,20 +1626,14 @@ async fn main() {
       let stack_name = destroy_opts.get_one::<String>("STACKNAME").expect("No Stack named").to_string();
       let stack_parameter_file = get_stack_parameter_file(stack_name.clone());
       let mut region = default_region();
-      if stack_parameter_file.clone().is_some() {
-        region = stack_parameter_file.clone().unwrap().region;
+      if let Some(stack_parameter_file) = stack_parameter_file.as_ref() {
+        region = stack_parameter_file.region.clone();
       }
       let client = build_cfn_client(region.clone()).await;
       let delete_stack_input = client.delete_stack().stack_name(stack_name.clone());
       let start_time = Local::now();
       let always_yes = destroy_opts.get_flag("yes");
-      let poll = match destroy_opts.get_one::<String>("poll") {
-        Some(poll_value) => match poll_value.as_str() {
-          "true" => true,
-          _ => false
-        },
-        None => true
-      };
+      let poll = destroy_opts.get_one::<String>("poll").map(|v| v == "true").unwrap_or(true);
       if always_yes_or_ask(always_yes, "destroy stack") {
         cleanup_resources(stack_name.clone(), region.clone()).await;
         delete_stack_rek(client.clone(), delete_stack_input, 0).await;
@@ -1760,10 +1654,10 @@ fn always_yes_or_ask(always_yes: bool, msg: &str) -> bool {
   if !always_yes {
     print!("Do you want to execute {}?: ", msg);
     stdout().flush().unwrap();
-    stdin().read_line(&mut input).expect(&format!("Canceling {}", msg)[..]);
+    stdin().read_line(&mut input).unwrap_or_else(|_| panic!("Canceling {}", msg));
     input.pop();
   }
-  return always_yes || ["y", "j", "yes", "ja", "si"].contains(&&*input.to_lowercase());
+  always_yes || ["y", "j", "yes", "ja", "si"].contains(&input.to_lowercase().as_str())
 }
 
 #[async_recursion]
@@ -1772,13 +1666,13 @@ async fn describe_stack_resources_rek(client: CloudFormationClient, stack_name: 
   match resource_input.send().await {
     Ok(result) => result.stack_resources().to_vec(),
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in describe stack resources: {}", e);
       } else {
         println!("Something went wrong in describe stack resources (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       describe_stack_resources_rek(client, stack_name, i+1).await
     }
   }
@@ -1790,13 +1684,13 @@ async fn get_bucket_versioning_rek(s3: S3Client, bucket: String, i: u64) -> bool
   match version_input.send().await {
     Ok(result) => result.status() == Some(&aws_sdk_s3::types::BucketVersioningStatus::Enabled),
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in get_bucket_versioning: {}", e);
       } else {
         println!("Something went wrong in get_bucket_versioning (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_bucket_versioning_rek(s3, bucket, i+1).await
     }
   }
@@ -1814,13 +1708,13 @@ async fn list_object_versions_rek(s3: S3Client, bucket: String, key_marker: Opti
   match list_version_input.send().await {
     Ok(result) => result,
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in list_object_versions: {}", e);
       } else {
         println!("Something went wrong in list_object_versions (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_object_versions_rek(s3, bucket, key_marker, version_id_marker, i+1).await
     }
   }
@@ -1838,13 +1732,13 @@ async fn delete_objects_rek(s3: S3Client, bucket: String, objects: Vec<ObjectIde
   match object_delete_input.send().await {
     Ok(_) => {},
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in delete_objects: {}", e);
       } else {
         println!("Something went wrong in delete_objects (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       delete_objects_rek(s3, bucket, objects, i+1).await
     }
   }
@@ -1859,13 +1753,13 @@ async fn list_objects_rek(s3: S3Client, bucket: String, continuation_token: Opti
   match list_objects_input.send().await {
     Ok(result) => result,
     Err(e) => {
-      let wait_time = 2000 + 1000 * u64::pow(i, 2) as u64;
+      let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
         panic!("Retry limit reached in list_objects: {}", e);
       } else {
         println!("Something went wrong in list_objects (retrying in {} ms): {}", wait_time, e);
       }
-      sleep(Duration::from_millis(wait_time));
+      tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_objects_rek(s3, bucket, continuation_token, i+1).await
     }
   }
@@ -1879,8 +1773,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
   //                           AWS::Route53::HostedZone
   let s3 = build_s3_client(region.clone()).await;
   for resource in describe_stack_resources_rek(client, stack_name, 0).await.iter() {
-    match resource.resource_type().as_deref() {
-      Some("AWS::S3::Bucket") => {
+    if let Some("AWS::S3::Bucket") = resource.resource_type() {
         let bucket = resource.physical_resource_id().expect("No physical resource id provided").to_string();
         println!("Deleting content from bucket {}", bucket.bold());
         if get_bucket_versioning_rek(s3.clone(), bucket.clone(), 0).await {
@@ -1923,8 +1816,6 @@ async fn cleanup_resources(stack_name: String, region: Region) {
             }
           }
         }
-      }
-      _ => {}
     }
   }
 }
