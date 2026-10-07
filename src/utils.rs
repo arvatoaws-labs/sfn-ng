@@ -15,7 +15,7 @@ pub fn pretty_panic(message: String) {
 pub fn pretty_print_stack_events(mut events: Vec<StackEvent>, start_time: DateTime<Local>) {
     events.sort_by(|x, y| x.timestamp().cmp(&y.timestamp()));
     for line in &events {
-        let event_time = NaiveDateTime::parse_from_str(&line.timestamp().unwrap().to_string(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
+        let event_time = DateTime::from_timestamp_nanos(line.timestamp().unwrap().as_nanos().try_into().expect("stack event timestamp out of range")).with_timezone(&Local);
         if start_time.lt(&event_time) {
             println!("{:25.25} {:70.70} {:50.50} {:}",
                      match_status_color(line.resource_status().unwrap().as_str(), line.timestamp().unwrap().to_string().as_str()),

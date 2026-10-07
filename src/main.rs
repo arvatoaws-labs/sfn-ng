@@ -19,7 +19,7 @@ use std::fs;
 use std::time::Duration;
 use std::io::{Write, stdin, stdout};
 use serde_json::Value;
-use chrono::{DateTime, Local, NaiveDateTime, Duration as ChronoDuration};
+use chrono::{DateTime, Local, Duration as ChronoDuration};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use async_recursion::async_recursion;
@@ -249,7 +249,7 @@ async fn poll_stack_status(stack_id: Option<String>, client: CloudFormationClien
     let completion_test = generate_completion_test_rek(stack_id.clone(), client.clone(), 0).await;
     let events = generate_events_output_rek(stack_id.clone(), client.clone(), 0).await;
     pretty_print_stack_events(events.clone(), last_printed);
-    last_printed = NaiveDateTime::parse_from_str(events.iter().max_by_key(|event| event.timestamp()).unwrap().timestamp().unwrap().to_string().as_str(), "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap().and_utc().with_timezone(&Local);
+    last_printed = DateTime::from_timestamp_nanos(events.iter().max_by_key(|event| event.timestamp()).unwrap().timestamp().unwrap().as_nanos().try_into().expect("stack event timestamp out of range")).with_timezone(&Local);
     if [
       "CREATE_COMPLETE",
       "UPDATE_COMPLETE",
