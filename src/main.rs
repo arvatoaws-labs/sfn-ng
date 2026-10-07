@@ -10,6 +10,7 @@ use aws_sdk_s3::types::{
     NoncurrentVersionExpiration, ObjectIdentifier, PublicAccessBlockConfiguration, Tag as BucketTag,
 };
 use aws_sdk_sts::Client as StsClient;
+use aws_smithy_types::error::display::DisplayErrorContext;
 use aws_types::region::Region;
 use clap::{Arg, ArgAction, Command, ArgMatches};
 use colored::*;
@@ -31,6 +32,12 @@ pub mod utils;
 pub use utils::*;
 
 fn default_region() -> Region {
+  if let Ok(region) = std::env::var("AWS_REGION") {
+    return Region::new(region);
+  }
+  if let Ok(region) = std::env::var("AWS_DEFAULT_REGION") {
+    return Region::new(region);
+  }
   Region::new("us-east-1")
 }
 
@@ -112,9 +119,9 @@ async fn lookup_stack_outputs_rek(stack_name: String, client: CloudFormationClie
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in describe stack: {}", e);
+        panic!("Retry limit reached in describe stack: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong describing stack (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong describing stack (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       lookup_stack_outputs_rek(stack_name, client, i+1).await
@@ -132,9 +139,9 @@ async fn generate_completion_test_rek(stack_name: Option<String>, client: CloudF
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in describing Stack: {}", e);
+        panic!("Retry limit reached in describing Stack: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in describing Stack (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in describing Stack (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       generate_completion_test_rek(stack_name, client, i+1).await
@@ -162,9 +169,9 @@ async fn wait_for_bucket_creation(client: S3Client, name: String, i: u64) {
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in waiting for template bucket to create: {}", e);
+        panic!("Retry limit reached in waiting for template bucket to create: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in waiting for template bucket (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in waiting for template bucket (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       wait_for_bucket_creation(client, name, i+1).await
@@ -204,9 +211,9 @@ async fn wait_for_changeset_creation(client: CloudFormationClient, change_set_na
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in describing changeset: {}", e);
+        panic!("Retry limit reached in describing changeset: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in describing changeset (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in describing changeset (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       wait_for_changeset_creation(client, change_set_name, stack_name, i+1).await
@@ -222,9 +229,9 @@ async fn generate_events_output_rek(stack_name: Option<String>, client: CloudFor
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in getting stack events: {}", e);
+        panic!("Retry limit reached in getting stack events: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in getting stack events (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in getting stack events (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       generate_events_output_rek(stack_name, client, i+1).await
@@ -424,9 +431,9 @@ async fn list_stacks_prep(ec2: Ec2Client, list_opts: &ArgMatches, i: u64) {
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in list stacks prep: {}", e);
+        panic!("Retry limit reached in list stacks prep: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in list stacks prep (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in list stacks prep (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_stacks_prep(ec2, list_opts, i + 1).await
@@ -439,7 +446,7 @@ async fn list_stacks_main(client: CloudFormationClient, region: Region, list_opt
     let mut list_stacks_input = client.list_stacks();
     if list_opts.contains_id("status") {
         list_stacks_input = list_stacks_input.stack_status_filter(StackStatus::from(list_opts.get_one::<String>("status").unwrap().as_str()));
-    } else if !list_opts.contains_id("deleted") {
+    } else if !list_opts.get_flag("deleted") {
     let list_of_types = [
       "CREATE_IN_PROGRESS",
       "CREATE_FAILED",
@@ -475,7 +482,7 @@ async fn list_stacks(matches: ArgMatches) {
     let region = default_region();
 
     let list_opts = matches.subcommand_matches("list").unwrap();
-    if list_opts.contains_id("all-regions") {
+    if list_opts.get_flag("all-regions") {
     let ec2 = build_ec2_client(region.clone()).await;
     list_stacks_prep(ec2, list_opts, 0).await
   } else {
@@ -504,9 +511,9 @@ async fn list_stacks_rek(_client: CloudFormationClient, list_stacks_input: aws_s
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in list stacks: {}", e);
+        panic!("Retry limit reached in list stacks: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong listing stacks (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong listing stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_stacks_rek(_client, list_stacks_input, i+1).await
@@ -765,9 +772,9 @@ async fn create_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in create stacks: {}", e);
+        panic!("Retry limit reached in create stacks: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong creating stacks (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong creating stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       create_stack_rek(poll, client, region.clone(), create_stack_input, start_time, i+1).await
@@ -782,9 +789,9 @@ async fn delete_stack_rek(_client: CloudFormationClient, delete_stack_input: aws
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in delete stack: {}", e);
+        panic!("Retry limit reached in delete stack: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong deleting stack (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong deleting stack (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       delete_stack_rek(_client, delete_stack_input, i+1).await
@@ -823,9 +830,9 @@ async fn get_old_stack_parameters_rek(stack_name: String, region: Region, i: u64
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in get_old_stack_parameters_rek: {}", e);
+        panic!("Retry limit reached in get_old_stack_parameters_rek: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in get_old_stack_parameters_rek (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in get_old_stack_parameters_rek (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_old_stack_parameters_rek(stack_name, region, i+1).await
@@ -844,9 +851,9 @@ async fn get_old_template_body_rek(stack_name: String, region: Region, i: u64) -
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in get_old_template_body_rek: {}", e);
+        panic!("Retry limit reached in get_old_template_body_rek: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in get_old_template_body_rek (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in get_old_template_body_rek (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_old_template_body_rek(stack_name, region, i+1).await
@@ -1147,7 +1154,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
 
   let mut dirty_flag_parameter_header = false;
   let used_parameters = merged_parameters.iter().map(|param| {
-    if opts.contains_id("defaults")
+    if opts.get_flag("defaults")
       && param.parameter_value().is_some() {
       return make_parameter(
         param.parameter_key().map(|k| k.to_string()),
@@ -1161,7 +1168,7 @@ async fn prepare_stack_input(opts: &ArgMatches, start_time: DateTime<Local>, is_
       let old = old_params_map.get(param.parameter_key().unwrap()).unwrap_or(&new_word);
       let new = param.parameter_value().unwrap_or("").italic();
       let not_changed = new.clone().normal().clear().eq(&old.clone().normal().clear());
-      if opts.contains_id("changed-params") && not_changed {
+      if opts.get_flag("changed-params") && not_changed {
         return make_parameter(
           param.parameter_key().map(|k| k.to_string()),
           param.parameter_value().map(|v| v.to_string()),
@@ -1242,9 +1249,9 @@ async fn create_changeset_diff_display(client: CloudFormationClient, change_set_
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in update stacks: {}", e);
+        panic!("Retry limit reached in update stacks: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       create_changeset_diff_display(client, change_set_name, stack_name, next_token, _start_time, i+1).await
@@ -1263,9 +1270,9 @@ async fn execute_change_set_rek(poll: bool, client: CloudFormationClient, region
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in update stacks: {}", e);
+        panic!("Retry limit reached in update stacks: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       execute_change_set_rek(poll, client, region.clone(), stack_id, execute_changeset_input, start_time, i+1).await
@@ -1291,9 +1298,9 @@ async fn update_stack_rek(poll: bool, client: CloudFormationClient, region: Regi
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in update stacks: {}", e);
+        panic!("Retry limit reached in update stacks: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       update_stack_rek(poll, client, region.clone(), create_changeset_input, change_set_name, stack_name, always_yes, start_time, i+1).await
@@ -1341,7 +1348,7 @@ async fn bucket_settings(client: S3Client, name: String) {
       // println!("DEBUG: Lifecycle worked");
     }
     Err(e) => {
-      println!("Error putting bucket lifecycle rule: {}", e);
+      println!("Error putting bucket lifecycle rule: {}", DisplayErrorContext(&e));
     }
   };
   println!("Putting public access block config");
@@ -1358,7 +1365,7 @@ async fn bucket_settings(client: S3Client, name: String) {
       println!("Put public access block config");
     }
     Err(e) => {
-      println!("Error putting public access block config: {}", e);
+      println!("Error putting public access block config: {}", DisplayErrorContext(&e));
     }
   }
   let get_tags = client.get_bucket_tagging().bucket(name.clone());
@@ -1410,7 +1417,7 @@ async fn bucket_settings(client: S3Client, name: String) {
       println!("Tagged bucket {}", name);
     }
     Err(e) => {
-      println!("Error tagging bucket {}: {}", name, e);
+      println!("Error tagging bucket {}: {}", name, DisplayErrorContext(&e));
     }
   }
 }
@@ -1432,9 +1439,9 @@ async fn create_bucket_rek(client: S3Client, region: Region, name: String, i: u6
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in create bucket: {}", e);
+        panic!("Retry limit reached in create bucket: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong creating bucket (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong creating bucket (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       create_bucket_rek(client, region, name, i+1).await
@@ -1470,9 +1477,9 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
         Err(e) => {
           let wait_time = 2000 + 1000 * i * i;
           if i > 20 {
-            panic!("Retry limit reached in update stacks: {}", e);
+            panic!("Retry limit reached in update stacks: {}", DisplayErrorContext(&e));
           } else {
-            println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, e);
+            println!("Something went wrong updating stacks (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
           }
           tokio::time::sleep(Duration::from_millis(wait_time)).await;
           find_template_bucket_or_create_it_rek(region, i+1).await
@@ -1482,9 +1489,9 @@ async fn find_template_bucket_or_create_it_rek(region: Region, i: u64) -> String
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in find template bucket: {}", e);
+        panic!("Retry limit reached in find template bucket: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong finding template bucket (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong finding template bucket (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       find_template_bucket_or_create_it_rek(region, i+1).await
@@ -1668,9 +1675,9 @@ async fn describe_stack_resources_rek(client: CloudFormationClient, stack_name: 
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in describe stack resources: {}", e);
+        panic!("Retry limit reached in describe stack resources: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in describe stack resources (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in describe stack resources (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       describe_stack_resources_rek(client, stack_name, i+1).await
@@ -1686,9 +1693,9 @@ async fn get_bucket_versioning_rek(s3: S3Client, bucket: String, i: u64) -> bool
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in get_bucket_versioning: {}", e);
+        panic!("Retry limit reached in get_bucket_versioning: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in get_bucket_versioning (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in get_bucket_versioning (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       get_bucket_versioning_rek(s3, bucket, i+1).await
@@ -1710,9 +1717,9 @@ async fn list_object_versions_rek(s3: S3Client, bucket: String, key_marker: Opti
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in list_object_versions: {}", e);
+        panic!("Retry limit reached in list_object_versions: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in list_object_versions (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in list_object_versions (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_object_versions_rek(s3, bucket, key_marker, version_id_marker, i+1).await
@@ -1734,9 +1741,9 @@ async fn delete_objects_rek(s3: S3Client, bucket: String, objects: Vec<ObjectIde
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in delete_objects: {}", e);
+        panic!("Retry limit reached in delete_objects: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in delete_objects (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in delete_objects (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       delete_objects_rek(s3, bucket, objects, i+1).await
@@ -1755,9 +1762,9 @@ async fn list_objects_rek(s3: S3Client, bucket: String, continuation_token: Opti
     Err(e) => {
       let wait_time = 2000 + 1000 * i * i;
       if i > 20 {
-        panic!("Retry limit reached in list_objects: {}", e);
+        panic!("Retry limit reached in list_objects: {}", DisplayErrorContext(&e));
       } else {
-        println!("Something went wrong in list_objects (retrying in {} ms): {}", wait_time, e);
+        println!("Something went wrong in list_objects (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
       }
       tokio::time::sleep(Duration::from_millis(wait_time)).await;
       list_objects_rek(s3, bucket, continuation_token, i+1).await
@@ -1810,7 +1817,7 @@ async fn cleanup_resources(stack_name: String, region: Region) {
                 .build().expect("Failed to build ObjectIdentifier")).collect();
               delete_objects_rek(s3.clone(), bucket.clone(), objects, 0).await;
             }
-            token = result.continuation_token().map(|v| v.to_string());
+            token = result.next_continuation_token().map(|v| v.to_string());
             if !result.is_truncated().unwrap_or(false) {
               break;
             }

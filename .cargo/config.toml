@@ -1,31 +1,4 @@
-# Project-scoped compiler flags for C build dependencies (aws-lc-sys).
-#
-# Why this exists:
-# A global `CFLAGS` containing `-mcpu=native -march=native` (e.g. exported from
-# ~/.zshrc) breaks the aws-lc-sys build on Apple Silicon in two ways:
-#
-# 1. `-O3` in CFLAGS overrides the `-O0` that aws-lc-sys requires for
-#    jitterentropy, when the `cc` crate resolves to >= 1.6.0 (which snapshots
-#    the environment before aws-lc-sys's CFLAGS guard is applied).
-#    See https://github.com/aws/aws-lc-rs/issues/1252
-#    -> mitigated by pinning `cc` to 1.5.1 in Cargo.lock
-#       (re-pin after `cargo update`: `cargo update -p cc --precise 1.5.1`).
-#
-# 2. `-mcpu=native -march=native` undefines `__ARM_FEATURE_AES` /
-#    `__ARM_FEATURE_SHA2` for the C compiler, tripping the
-#    "NEON and crypto extensions should be statically available" #error in
-#    aws-lc/crypto/fipsmodule/cpucap/cpu_aarch64_apple.c.
-#    -> mitigated here by overriding CFLAGS for this project only.
-#
-# `-O3 -mtune=native` is kept (safe: -mtune does not change target features);
-# only the breaking `-mcpu=native -march=native` is dropped.
-#
-# `force = true` (per variable) is required so this overrides CFLAGS inherited
-# from the shell.
-# Note: `AWS_LC_SYS_CFLAGS` alone does NOT work, because the `cc` crate
-# concatenates all CFLAGS-family variables (CFLAGS_<target>, HOST_CFLAGS,
-# CFLAGS), so the global CFLAGS would still leak in.
 [env]
-CFLAGS = { value = "-O3 -mtune=native", force = true }
-CXXFLAGS = { value = "-O3 -mtune=native", force = true }
-FCFLAGS = { value = "-O3 -mtune=native", force = true }
+CFLAGS = { value = "-O2", force = true }
+CXXFLAGS = { value = "-O2", force = true }
+FCFLAGS = { value = "-O2", force = true }

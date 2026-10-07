@@ -1,5 +1,6 @@
 use aws_sdk_cloudformation::Client as CloudFormationClient;
 use aws_sdk_cloudformation::types::{Change, StackEvent};
+use aws_smithy_types::error::display::DisplayErrorContext;
 use colored::*;
 use std::time::Duration;
 use serde_json::{Value};
@@ -41,9 +42,9 @@ async fn lookup_stackid_to_name_rek(stack_name: String, client: CloudFormationCl
         Err(e) => {
             let wait_time = 2000 + 1000 * i * i;
             if i > 20 {
-                panic!("Retry limit reached in lookup stackid to name: {}", e);
+                panic!("Retry limit reached in lookup stackid to name: {}", DisplayErrorContext(&e));
             } else {
-                println!("Something went wrong in lookup stackid to name (retrying in {} ms): {}", wait_time, e);
+                println!("Something went wrong in lookup stackid to name (retrying in {} ms): {}", wait_time, DisplayErrorContext(&e));
             }
             tokio::time::sleep(Duration::from_millis(wait_time)).await;
             lookup_stackid_to_name_rek(stack_name, client, i+1).await
