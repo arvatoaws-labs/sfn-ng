@@ -1,7 +1,15 @@
 # sfn-ng
 [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B13331%2Fgit%40github.com%3Aarvatoaws-labs%2Fsfn-ng.git.svg?type=shield)](https://app.fossa.com/projects/custom%2B13331%2Fgit%40github.com%3Aarvatoaws-labs%2Fsfn-ng.git?ref=badge_shield)
 
-Example Stack Config:
+## Building
+
+Depending on the state of the AWS SDK for Rust, you might need to unset certain global flags
+
+```sh
+env -u CFLAGS -u CXXFLAGS -u FCFLAGS cargo build
+```
+
+## Example Stack Config:
 ```ruby
 require 'attribute_struct'
 
