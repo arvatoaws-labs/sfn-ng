@@ -1,4 +1,4 @@
 [env]
-CFLAGS = { value = "-O2", force = true }
-CXXFLAGS = { value = "-O2", force = true }
-FCFLAGS = { value = "-O2", force = true }
+CFLAGS = { value = "-O0", force = true }
+CXXFLAGS = { value = "-O0", force = true }
+FCFLAGS = { value = "-O0", force = true }
