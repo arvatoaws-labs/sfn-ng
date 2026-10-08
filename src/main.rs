@@ -523,7 +523,7 @@ async fn list_stacks_rek(_client: CloudFormationClient, list_stacks_input: aws_s
 
 fn generate_matches() -> ArgMatches {
     Command::new("sfn-ng")
-        .version("0.3.1")
+        .version("0.3.2")
         .author("Patrick Robinson <patrick.robinson@bertelsmann.de>")
         .about("Does sparkleformation command stuff")
         .subcommand(
