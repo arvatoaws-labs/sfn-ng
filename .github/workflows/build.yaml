@@ -115,7 +115,7 @@ jobs:
           #password: ${{ secrets.CR_PAT }}
       - name: Create Docker Manifest
         if: steps.docker_meta.outputs.tags != ''
-        uses: int128/docker-manifest-create-action@v2.29.0
+        uses: int128/docker-manifest-create-action@v2.30.0
         with:
           index-annotations: ${{ steps.docker_meta.outputs.labels }}
           tags: ${{ steps.docker_meta.outputs.tags }}
