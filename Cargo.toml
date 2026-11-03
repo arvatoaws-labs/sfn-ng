@@ -1,8 +1,9 @@
 [package]
 name = "sfn-ng"
-version = "0.3.3"
+version = "0.3.4"
 authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>", "Stephan Telahr <stephan.telahr@bertelsmann.de>"]
 edition = "2024"
+rust-version = "1.94.1"
 license = "GPL-3.0"
 description = "Rust replacement for sfn with more features"
 homepage = "https://github.com/arvatoaws-labs/sfn-ng"
