@@ -34,7 +34,7 @@ jobs:
             type=ref,event=pr
       - name: Login to GitHub Packages Docker Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{github.actor}}
@@ -72,7 +72,7 @@ jobs:
             type=ref,event=pr
       - name: Login to GitHub Packages Docker Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{github.actor}}
@@ -106,7 +106,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
       - name: Login to GitHub Packages Docker Registry
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{github.actor}}
@@ -115,7 +115,7 @@ jobs:
           #password: ${{ secrets.CR_PAT }}
       - name: Create Docker Manifest
         if: steps.docker_meta.outputs.tags != ''
-        uses: int128/docker-manifest-create-action@v2.29.0
+        uses: int128/docker-manifest-create-action@v2.30.0
         with:
           index-annotations: ${{ steps.docker_meta.outputs.labels }}
           tags: ${{ steps.docker_meta.outputs.tags }}
