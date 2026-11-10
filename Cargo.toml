@@ -1,6 +1,6 @@
 [package]
 name = "sfn-ng"
-version = "0.3.4"
+version = "0.3.5"
 authors = ["Patrick Robinson <patrick.robinson@bertelsmann.de>", "Stephan Telahr <stephan.telahr@bertelsmann.de>"]
 edition = "2024"
 rust-version = "1.94.1"
